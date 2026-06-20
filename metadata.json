@@ -1,0 +1,6 @@
+{
+  "name": "AXOM OS",
+  "description": "A multi-tiered, highly secure, and exceptionally concurrent academic AI research agent platform for chapter-by-chapter project generation with built-in humanizer engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
