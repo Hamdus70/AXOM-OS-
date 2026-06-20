@@ -127,7 +127,7 @@ export async function bootstrapVectorStoreSchema(): Promise<void> {
         `);
         // Vector Indexing to prevent query performance degradation under high loads
         await client.query(`
-          CREATE INDEX IF NOT EXISTS idx_document_chunks_vector ON document_chunks USING ivfflat (embedding cosine) WITH (lists = 100);
+          CREATE INDEX IF NOT EXISTS idx_document_chunks_vector ON document_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
         `);
       } else {
         await client.query(`
