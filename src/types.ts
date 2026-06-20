@@ -43,6 +43,14 @@ export interface VerificationReport {
   };
 }
 
+export interface ChapterComment {
+  id: string;
+  paragraphIndex: number;
+  authorName: string;
+  text: string;
+  timestamp: string;
+}
+
 export interface Chapter {
   title: string;
   content: string;
@@ -56,6 +64,7 @@ export interface Chapter {
   isApproved?: boolean;
   feedbackLogs?: { role: 'user' | 'assistant'; text: string; timestamp: string }[];
   verificationReport?: VerificationReport;
+  comments?: ChapterComment[];
 }
 
 export interface ResearchProject {

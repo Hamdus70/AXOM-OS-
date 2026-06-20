@@ -28,7 +28,8 @@ import {
   MessageSquare,
   Check,
   Sun,
-  Moon
+  Moon,
+  FileSpreadsheet
 } from "lucide-react";
 import { ResearchProject, ClusterMetrics } from "./types";
 
@@ -146,6 +147,10 @@ export default function App() {
   // Editor Content State
   const [editorContent, setEditorContent] = useState("");
   const [editorSaveStatus, setEditorSaveStatus] = useState<"clean" | "dirty" | "saving" | "saved">("clean");
+  const [editorViewMode, setEditorViewMode] = useState<"standard" | "comments">("standard");
+  const [selectedParagraphIndex, setSelectedParagraphIndex] = useState<number>(0);
+  const [newCommentAuthor, setNewCommentAuthor] = useState("Dr. Sarah Jenkins");
+  const [newCommentBody, setNewCommentBody] = useState("");
 
   // Feedback & Sequential Review States
   const [feedbackText, setFeedbackText] = useState("");
@@ -596,10 +601,10 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     }
   };
 
-  const exportVettedDocument = (id: string, format: "docx" | "pdf") => {
+  const exportVettedDocument = (id: string, format: "docx" | "pdf" | "csv" | "epub") => {
     if (!id) return;
     try {
-      showInfo(`Initializing direct download stream from FastAPI server. Ephemeral RAM buffer will be wiped immediately.`);
+      showInfo(`Initializing direct download stream from server. Ephemeral RAM buffer will be wiped immediately.`);
       // Traditional secure immediate stream triggers
       window.location.href = `/api/verification/export?id=${id}&format=${format}`;
       
@@ -1139,6 +1144,95 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     }
   };
 
+  const handleAddParagraphComment = async () => {
+    if (!newCommentBody.trim() || !newCommentAuthor.trim()) return;
+    if (!selectedProject || !currentChapterKey) return;
+    
+    try {
+      const activeCh = selectedProject.chapters?.[currentChapterKey];
+      if (!activeCh) return;
+      
+      const newComment = {
+        id: "comm-" + Math.random().toString(36).substring(2, 11),
+        paragraphIndex: selectedParagraphIndex,
+        authorName: newCommentAuthor.trim(),
+        text: newCommentBody.trim(),
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " - " + new Date().toLocaleDateString()
+      };
+      
+      const updatedComments = [
+        ...(activeCh.comments || []),
+        newComment
+      ];
+      
+      const updatedChapters = {
+        ...selectedProject.chapters,
+        [currentChapterKey]: {
+          ...activeCh,
+          comments: updatedComments
+        }
+      };
+      
+      // Save immediately to DB
+      const res = await fetch(`/api/projects/${selectedProject.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chapters: updatedChapters
+        })
+      });
+      
+      if (!res.ok) throw new Error("Could not persist comment to project database.");
+      
+      // Update local projects list
+      setProjects((prev) =>
+        prev.map((p) => (p.id === selectedProject.id ? { ...p, chapters: updatedChapters } : p))
+      );
+      
+      setNewCommentBody("");
+      showInfo("Advisor margin comment successfully posted and saved!");
+    } catch (err: any) {
+      showError(err.message);
+    }
+  };
+
+  const handleDeleteParagraphComment = async (commentId: string) => {
+    if (!selectedProject || !currentChapterKey) return;
+    
+    try {
+      const activeCh = selectedProject.chapters?.[currentChapterKey];
+      if (!activeCh) return;
+      
+      const updatedComments = (activeCh.comments || []).filter(c => c.id !== commentId);
+      
+      const updatedChapters = {
+        ...selectedProject.chapters,
+        [currentChapterKey]: {
+          ...activeCh,
+          comments: updatedComments
+        }
+      };
+      
+      // Save immediately to DB
+      const res = await fetch(`/api/projects/${selectedProject.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chapters: updatedChapters
+        })
+      });
+      
+      if (!res.ok) throw new Error("Failed to delete comment in database.");
+      
+      setProjects((prev) =>
+        prev.map((p) => (p.id === selectedProject.id ? { ...p, chapters: updatedChapters } : p))
+      );
+      showInfo("Comment deleted permanently.");
+    } catch (err: any) {
+      showError(err.message);
+    }
+  };
+
   // Manual Editor Saves changes
   const handleSaveEditor = async () => {
     if (!selectedProject || editorSaveStatus === "saving") return;
@@ -1211,6 +1305,88 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     const file = new Blob([content], { type: "text/plain" });
     element.href = URL.createObjectURL(file);
     element.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  // Academic format MS Word downloader: Times New Roman, Size 12pt, Double Spacing, 1-inch margins
+  const downloadAcademicDoc = (title: string, content: string) => {
+    const lines = content.split("\n");
+    let htmlContent = "";
+    let inList = false;
+
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        if (inList) {
+          htmlContent += "</ul>\n";
+          inList = false;
+        }
+        return;
+      }
+
+      if (trimmed.startsWith("# ")) {
+        htmlContent += `<h1 style="font-size: 16pt; text-align: center; margin-top: 24pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif; text-transform: uppercase;">${trimmed.replace("# ", "")}</h1>\n`;
+      } else if (trimmed.startsWith("## ")) {
+        htmlContent += `<h2 style="font-size: 14pt; margin-top: 18pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("## ", "")}</h2>\n`;
+      } else if (trimmed.startsWith("### ")) {
+        htmlContent += `<h3 style="font-size: 12pt; margin-top: 12pt; margin-bottom: 6pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("### ", "")}</h3>\n`;
+      } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        if (!inList) {
+          htmlContent += `<ul style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          inList = true;
+        }
+        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.substring(2)}</li>\n`;
+      } else if (trimmed.match(/^\d+\.\s/)) {
+        if (!inList) {
+          htmlContent += `<ol style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          inList = true;
+        }
+        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.replace(/^\d+\.\s/, "")}</li>\n`;
+      } else if (trimmed.startsWith("|")) {
+        htmlContent += `<div style="margin: 12pt 0; text-align: center; font-family: 'Times New Roman', Times, serif;"><table border="1" cellspacing="0" cellpadding="6" style="margin: 0 auto; border-collapse: collapse; font-size: 11pt; line-height: 1.5; width: 100%;">`;
+        const rows = line.split("|").map(cell => cell.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
+        htmlContent += `<tr>` + rows.map(r => `<th style="border: 1px solid #777; background-color: #f2f2f2;">${r}</th>`).join("") + `</tr>`;
+        htmlContent += `</table></div>`;
+      } else {
+        if (inList) {
+          htmlContent += "</ul>\n";
+          inList = false;
+        }
+        htmlContent += `<p style="font-size: 12pt; line-height: 2.0; text-indent: 0.5in; margin-bottom: 12pt; text-align: justify; font-family: 'Times New Roman', Times, serif;">${trimmed}</p>\n`;
+      }
+    });
+
+    const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  @page {
+    size: letter;
+    margin: 1in;
+  }
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 12pt;
+    line-height: 2.0;
+    margin: 1in;
+    color: #000;
+    background-color: #fff;
+  }
+</style>
+</head>
+<body>
+  ${htmlContent}
+</body>
+</html>`;
+
+    const element = document.createElement("a");
+    const file = new Blob([fullHtml], { type: "application/msword" });
+    element.href = URL.createObjectURL(file);
+    element.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-academic-format.doc`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -2500,10 +2676,17 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                               <div className="flex items-center space-x-1.5 shrink-0">
                                 <button
                                   onClick={() => downloadMarkdown(activeOutline.title, editorContent)}
-                                  className="px-2.5 py-1 border border-zinc-700 hover:bg-zinc-805 text-zinc-300 text-[10px] font-mono tracking-tight transition"
+                                  className="px-2 py-1 border border-zinc-700 hover:bg-zinc-805 text-zinc-300 text-[10px] font-mono tracking-tight transition"
                                   title="Download Markdown"
                                 >
-                                  Export
+                                  Export MD
+                                </button>
+                                <button
+                                  onClick={() => downloadAcademicDoc(activeOutline.title, editorContent)}
+                                  className="px-2 py-1 border border-emerald-900 bg-emerald-950/20 hover:bg-emerald-950/40 text-emerald-300 text-[10px] font-mono tracking-tight transition font-bold"
+                                  title="Download MS Word styled with Times New Roman, Double Spacing, 1in Margins"
+                                >
+                                  Export Word (.doc)
                                 </button>
                                 <button
                                   onClick={() => {
@@ -2907,37 +3090,243 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                 </div>
                               )}
 
-                              {/* Focused Manuscript Editor Canvas Section (Responsive paper sheet with publication formatting) */}
-                              <div className={`relative group/editor border p-1.5 shadow-inner transition duration-350 rounded ${
-                                isDarkMode 
-                                  ? "border-zinc-850 bg-[#09090C] focus-within:border-cyan-500/40" 
-                                  : "border-zinc-250 bg-zinc-50 focus-within:border-blue-600/40 shadow-md"
-                              }`}>
-                                <textarea
-                                  ref={editorRef}
-                                  value={editorContent}
-                                  onChange={(e) => {
-                                    setEditorContent(e.target.value);
-                                    setEditorSaveStatus("dirty");
-                                  }}
-                                  className={`w-full min-h-[480px] lg:min-h-[580px] px-10 py-12 focus:outline-none leading-relaxed resize-y focus:ring-0 overflow-y-auto ${
-                                    isDarkMode 
-                                      ? "bg-[#0C0C10] text-[#ECEAED] scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent" 
-                                      : "bg-[#FAFAFB] text-[#1F2023] border border-zinc-150 rounded-sm shadow-inner scrollbar-thin scrollbar-thumb-zinc-3 w"
-                                  }`}
-                                  placeholder="Edit chapter prose or draft findings here..."
-                                  style={{
-                                    lineHeight: "2.1",
-                                    fontFamily: '"Georgia", "Times New Roman", serif',
-                                    fontSize: "14px"
-                                  }}
-                                />
-                                <div className={`absolute bottom-3.5 right-4 text-[8px] font-mono opacity-50 uppercase tracking-widest ${
-                                  isDarkMode ? "text-cyan-400" : "text-blue-700"
-                                }`}>
-                                  Manuscript Draft Workspace • Active Focus Mode
+                              {/* Toggle Switch for Standard Edit Mode vs Advisor Margin Comments */}
+                              <div className="flex items-center justify-between border-b border-zinc-900 pb-3 mb-4 gap-2 mt-4" id="editor-collaboration-toggle-container">
+                                <div className="flex items-center space-x-1 p-0.5 bg-zinc-950 border border-zinc-800 rounded-sm">
+                                  <button
+                                    onClick={() => setEditorViewMode("standard")}
+                                    className={`px-3 py-1.5 rounded-sm text-[10px] font-mono font-bold tracking-tight uppercase transition flex items-center space-x-2 cursor-pointer ${
+                                      editorViewMode === "standard"
+                                        ? "bg-zinc-800 text-white shadow-sm font-extrabold"
+                                        : "text-zinc-500 hover:text-zinc-200"
+                                    }`}
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>🖋️ Writer Canvas</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setEditorViewMode("comments")}
+                                    className={`px-3 py-1.5 rounded-sm text-[10px] font-mono font-bold tracking-tight uppercase transition flex items-center space-x-2 cursor-pointer ${
+                                      editorViewMode === "comments"
+                                        ? "bg-indigo-950 text-indigo-300 border border-indigo-500/25 shadow-sm font-extrabold"
+                                        : "text-zinc-500 hover:text-indigo-400"
+                                    }`}
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+                                    <span>💬 Advisor Margin Notes ({activeChapter.comments?.length || 0})</span>
+                                  </button>
+                                </div>
+                                <div className="text-[9.5px] font-mono text-zinc-500 uppercase tracking-widest hidden sm:block">
+                                  Manuscript Peer Review Matrix Active
                                 </div>
                               </div>
+
+                              {editorViewMode === "standard" ? (
+                                <div className={`relative group/editor border p-1.5 shadow-inner transition duration-350 rounded ${
+                                  isDarkMode 
+                                    ? "border-zinc-850 bg-[#09090C] focus-within:border-cyan-500/40" 
+                                    : "border-zinc-250 bg-zinc-50 focus-within:border-blue-600/40 shadow-md"
+                                }`}>
+                                  <textarea
+                                    ref={editorRef}
+                                    value={editorContent}
+                                    onChange={(e) => {
+                                      setEditorContent(e.target.value);
+                                      setEditorSaveStatus("dirty");
+                                    }}
+                                    className={`w-full min-h-[480px] lg:min-h-[580px] focus:outline-none resize-y focus:ring-0 overflow-y-auto ${
+                                      isDarkMode 
+                                        ? "bg-[#0C0C10] text-[#ECEAED] scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent" 
+                                        : "bg-[#FAFAFB] text-[#1F2023] border border-zinc-150 rounded-sm shadow-inner scrollbar-thin scrollbar-thumb-zinc-3 w"
+                                    }`}
+                                    placeholder="Edit chapter prose or draft findings here..."
+                                    style={{
+                                      lineHeight: "2.0",
+                                      fontFamily: '"Times New Roman", Times, Georgia, serif',
+                                      fontSize: "12pt",
+                                      padding: "1in"
+                                    }}
+                                  />
+                                  <div className={`absolute bottom-3.5 right-4 text-[8px] font-mono opacity-50 uppercase tracking-widest ${
+                                    isDarkMode ? "text-cyan-400" : "text-blue-700"
+                                  }`}>
+                                    Manuscript Draft Workspace • Active Focus Mode
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-left" id="advisor-margin-notes-split-panel">
+                                  {/* Left Panel: Paragraph Prose Flow Selector (col-span-7) */}
+                                  <div className="lg:col-span-7 space-y-3">
+                                    <div className="p-3 bg-zinc-950 border border-zinc-850 rounded-sm mb-2.5">
+                                      <h5 className="text-[10px] font-mono font-bold text-indigo-400 uppercase tracking-wider mb-1">
+                                        ¶ Prose Paragraph selector
+                                      </h5>
+                                      <p className="text-[9.5px] text-zinc-400 font-sans leading-relaxed">
+                                        Select any paragraph below to view existing notes or pin a new collaborator margin annotation.
+                                      </p>
+                                    </div>
+
+                                    {(() => {
+                                      const paragraphs = editorContent.split(/\n\n+/).filter(p => p.trim().length > 0);
+                                      if (paragraphs.length === 0) {
+                                        return (
+                                          <div className="p-10 border border-dashed border-zinc-800 text-center text-zinc-500 rounded-sm font-mono text-[11px]">
+                                            Chapter text is currently blank. Return to "Writer Canvas" to compile or document your prose first.
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <div className="space-y-3.5 max-h-[600px] overflow-y-auto pr-1">
+                                          {paragraphs.map((pText, pIdx) => {
+                                            const pCommentsCount = (activeChapter.comments || []).filter(c => c.paragraphIndex === pIdx).length;
+                                            const isSelected = selectedParagraphIndex === pIdx;
+
+                                            return (
+                                              <div
+                                                key={pIdx}
+                                                onClick={() => setSelectedParagraphIndex(pIdx)}
+                                                className={`p-4 border text-left leading-relaxed transition cursor-pointer rounded-sm relative group/p ${
+                                                  isSelected
+                                                    ? "bg-indigo-950/20 border-indigo-500/50 shadow-[0_0_12px_rgba(99,102,241,0.06)] text-zinc-150"
+                                                    : "bg-[#09090C] border-zinc-850 hover:border-zinc-700 hover:bg-zinc-900/10 text-zinc-350"
+                                                }`}
+                                              >
+                                                {/* Meta label */}
+                                                <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-zinc-900 text-[8.5px] font-mono tracking-tight text-zinc-500">
+                                                  <span className={isSelected ? "text-indigo-400 font-bold" : ""}>
+                                                    ¶ PARAGRAPH {pIdx + 1}
+                                                  </span>
+                                                  {pCommentsCount > 0 && (
+                                                    <span className="bg-indigo-900/40 text-indigo-300 border border-indigo-500/20 px-1.5 py-0.5 rounded font-bold flex items-center space-x-1">
+                                                      <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                                      <span>{pCommentsCount} note{pCommentsCount > 1 ? "s" : ""}</span>
+                                                    </span>
+                                                  )}
+                                                </div>
+
+                                                {/* Text block */}
+                                                <p className="font-serif text-[13px] leading-relaxed select-none text-zinc-105">
+                                                  {pText}
+                                                </p>
+                                                
+                                                {/* Selector outline visual */}
+                                                <div className={`absolute top-0 bottom-0 left-0 w-[2px] rounded ${
+                                                  isSelected ? "bg-indigo-500" : "bg-transparent group-hover/p:bg-zinc-800"
+                                                }`} />
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    })()}
+                                  </div>
+
+                                  {/* Right Panel: Margin Comments & Feedback (col-span-5) */}
+                                  <div className="lg:col-span-5 space-y-4">
+                                    <div className="p-4 bg-zinc-950 border border-zinc-850 rounded-sm">
+                                      <div className="flex items-center justify-between border-b border-zinc-900 pb-2 mb-3">
+                                        <span className="text-[10.5px] font-mono font-bold text-white uppercase tracking-wider">
+                                          Pin Advisor Annotation
+                                        </span>
+                                        <span className="text-[9px] bg-indigo-950/50 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 rounded font-bold uppercase tracking-wider font-mono">
+                                          Paragraph #{selectedParagraphIndex + 1}
+                                        </span>
+                                      </div>
+
+                                      {/* Input fields */}
+                                      <div className="space-y-3 font-mono text-[10.5px]">
+                                        <div>
+                                          <label className="text-zinc-405 block mb-1 uppercase tracking-wide">Advisor/Collaborator credentials:</label>
+                                          <input
+                                            type="text"
+                                            value={newCommentAuthor}
+                                            onChange={(e) => setNewCommentAuthor(e.target.value)}
+                                            placeholder="eg. Dr. Jenkins, Coordinator"
+                                            className="w-full bg-[#0C0C0E] border border-zinc-800 text-zinc-100 p-2 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                                          />
+                                        </div>
+
+                                        <div>
+                                          <label className="text-zinc-405 block mb-1 uppercase tracking-wide">Margin Notes content:</label>
+                                          <textarea
+                                            value={newCommentBody}
+                                            onChange={(e) => setNewCommentBody(e.target.value)}
+                                            rows={3}
+                                            placeholder="Type specific peer review critique or draft direction notes for this paragraph..."
+                                            className="w-full bg-[#0C0C0E] border border-zinc-800 text-zinc-150 p-2.5 text-xs focus:outline-none focus:border-indigo-500 transition-colors resize-none leading-relaxed"
+                                          />
+                                        </div>
+
+                                        <button
+                                          onClick={handleAddParagraphComment}
+                                          disabled={!newCommentBody.trim() || !newCommentAuthor.trim()}
+                                          className="w-full py-2 bg-indigo-650 hover:bg-indigo-600 disabled:bg-zinc-900 disabled:text-zinc-550 text-white rounded text-xs font-bold transition duration-200 cursor-pointer text-center"
+                                        >
+                                          Post Note to Margin
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Comments list for currently selected paragraph index */}
+                                    <div className="space-y-3.5">
+                                      <div className="flex items-center space-x-1.5 border-b border-zinc-900 pb-1.5 font-mono text-[9.5px]">
+                                        <MessageSquare className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                        <span className="uppercase font-bold tracking-wider text-zinc-300">
+                                          Margin Notes Index (¶ Paragraph {selectedParagraphIndex + 1})
+                                        </span>
+                                      </div>
+
+                                      {(() => {
+                                        const paragraphComments = (activeChapter.comments || []).filter(c => c.paragraphIndex === selectedParagraphIndex);
+
+                                        if (paragraphComments.length === 0) {
+                                          return (
+                                            <div className="p-8 border border-zinc-850 bg-[#09090C]/35 text-center text-zinc-500 rounded-sm text-xs font-sans italic leading-relaxed">
+                                              No feedback notes posted for paragraph {selectedParagraphIndex + 1}. Create one using the form above to align collaborator feedback.
+                                            </div>
+                                          );
+                                        }
+
+                                        return (
+                                          <div className="space-y-3 max-h-[350px] overflow-y-auto">
+                                            {paragraphComments.map((comm) => (
+                                              <div
+                                                key={comm.id}
+                                                className="p-3 bg-zinc-950 border border-zinc-850 rounded-sm relative group/c text-left shadow-sm"
+                                              >
+                                                {/* Header segment */}
+                                                <div className="flex items-start justify-between gap-2 mb-2 pb-1 border-b border-zinc-900">
+                                                  <div>
+                                                    <span className="text-[10px] uppercase font-mono font-bold text-indigo-400 px-1.5 py-0.5 bg-indigo-950 border border-indigo-900 rounded-sm">
+                                                      {comm.authorName}
+                                                    </span>
+                                                    <span className="text-[8.5px] font-mono text-zinc-500 ml-2">
+                                                      {comm.timestamp}
+                                                    </span>
+                                                  </div>
+                                                  <button
+                                                    onClick={() => handleDeleteParagraphComment(comm.id)}
+                                                    className="opacity-0 group-hover/c:opacity-100 hover:text-red-400 text-zinc-500 transition-opacity p-1 cursor-pointer"
+                                                    title="Remove annotation permanently"
+                                                  >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                </div>
+
+                                                {/* Note body */}
+                                                <p className="text-[11px] text-zinc-200 leading-relaxed font-sans whitespace-pre-line">
+                                                  {comm.text}
+                                                </p>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
 
                               {/* Sticky Chapter Checkpoint Banner (Requires Strict User Intervention) */}
                               {activeChapter?.status === "completed" && !activeChapter?.isApproved && (
@@ -2986,7 +3375,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                       type="button"
                                       onClick={() => {
                                         editorRef.current?.focus();
-                                        showInfo("Manual edit focus requested. Please type directly into the Georgia paper sheet.");
+                                        showInfo("Manual edit focus requested. Please type directly into the Times New Roman paper sheet.");
                                       }}
                                       className={`px-3.5 py-2 border text-[10px] font-mono uppercase font-bold tracking-wider rounded transition cursor-pointer flex items-center space-x-1.5 ${
                                         isDarkMode 
@@ -3836,10 +4225,10 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                       </div>
                     </div>
 
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2" id="verification-export-button-group">
                       <button
                         onClick={() => exportVettedDocument(verificationPayload.id, "docx")}
-                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-805 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-2 cursor-pointer"
+                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-805 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-1.5 cursor-pointer"
                         title="Fully formatted double-spaced DOCX with Word headings"
                       >
                         <Download className="w-3.5 h-3.5 text-cyan-400" />
@@ -3848,11 +4237,29 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                       
                       <button
                         onClick={() => exportVettedDocument(verificationPayload.id, "pdf")}
-                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-804 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-2 cursor-pointer"
+                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-804 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-1.5 cursor-pointer"
                         title="Secure unmodifiable PDF format"
                       >
                         <Lock className="w-3.5 h-3.5 text-amber-500" />
                         <span>Export PDF (.pdf)</span>
+                      </button>
+
+                      <button
+                        onClick={() => exportVettedDocument(verificationPayload.id, "csv")}
+                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-804 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-1.5 cursor-pointer"
+                        title="Generate CSV with full paragraph indexes and counts for database analysis"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Export CSV (.csv)</span>
+                      </button>
+
+                      <button
+                        onClick={() => exportVettedDocument(verificationPayload.id, "epub")}
+                        className="px-3.5 py-2 bg-gradient-to-r from-zinc-900 to-zinc-950 hover:from-zinc-800 hover:to-zinc-900 text-zinc-200 border border-zinc-804 text-[10px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center space-x-1.5 cursor-pointer"
+                        title="Beautifully standard EPUB package for Apple Books, Kindle, and mobile reading"
+                      >
+                        <BookOpen className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Export EPUB (.epub)</span>
                       </button>
 
                       <button

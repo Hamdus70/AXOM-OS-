@@ -160,8 +160,13 @@ export async function bootstrapDatabaseSchema(): Promise<void> {
             is_approved BOOLEAN DEFAULT FALSE,
             feedback_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
             verification_report JSONB NOT NULL DEFAULT '{}'::jsonb,
+            comments JSONB NOT NULL DEFAULT '[]'::jsonb,
             CONSTRAINT uq_project_chapter UNIQUE(project_id, chapter_key)
           );
+        `);
+
+        await client.query(`
+          ALTER TABLE chapters ADD COLUMN IF NOT EXISTS comments JSONB NOT NULL DEFAULT '[]'::jsonb;
         `);
 
         // Create Indices for high throughput project-specific fetches
@@ -416,7 +421,8 @@ export async function fetchAllProjects(): Promise<any[]> {
           completion_time as "completionTime", 
           logs, is_approved as "isApproved", 
           feedback_logs as "feedbackLogs", 
-          verification_report as "verificationReport"
+          verification_report as "verificationReport",
+          comments
         FROM chapters 
         WHERE project_id = $1
       `, [prj.id]);
@@ -436,6 +442,7 @@ export async function fetchAllProjects(): Promise<any[]> {
           isApproved: chap.isApproved,
           feedbackLogs: chap.feedbackLogs,
           verificationReport: chap.verificationReport,
+          comments: chap.comments || [],
         };
       });
 
@@ -475,7 +482,7 @@ export async function fetchProjectById(id: string): Promise<any | null> {
 
     const prj = prjResult.rows[0];
 
-    const chapResult = await pool.query(`
+     const chapResult = await pool.query(`
       SELECT 
         chapter_key, title, content, status, 
         word_count as "wordCount", 
@@ -485,7 +492,8 @@ export async function fetchProjectById(id: string): Promise<any | null> {
         completion_time as "completionTime", 
         logs, is_approved as "isApproved", 
         feedback_logs as "feedbackLogs", 
-        verification_report as "verificationReport"
+        verification_report as "verificationReport",
+        comments
       FROM chapters 
       WHERE project_id = $1
     `, [id]);
@@ -505,6 +513,7 @@ export async function fetchProjectById(id: string): Promise<any | null> {
         isApproved: chap.isApproved,
         feedbackLogs: chap.feedbackLogs,
         verificationReport: chap.verificationReport,
+        comments: chap.comments || [],
       };
     });
 
@@ -578,8 +587,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
           INSERT INTO chapters (
             project_id, chapter_key, title, content, status, word_count, 
             ai_originality_score, plagiarism_score, citations_count, 
-            completion_time, logs, is_approved, feedback_logs, verification_report
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            completion_time, logs, is_approved, feedback_logs, verification_report, comments
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
           ON CONFLICT (project_id, chapter_key) DO UPDATE SET
             title = EXCLUDED.title,
             content = EXCLUDED.content,
@@ -592,7 +601,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
             logs = EXCLUDED.logs,
             is_approved = EXCLUDED.is_approved,
             feedback_logs = EXCLUDED.feedback_logs,
-            verification_report = EXCLUDED.verification_report
+            verification_report = EXCLUDED.verification_report,
+            comments = EXCLUDED.comments
         `, [
           project.id,
           key,
@@ -607,7 +617,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
           JSON.stringify(chap.logs || []),
           chap.isApproved || false,
           JSON.stringify(chap.feedbackLogs || []),
-          JSON.stringify(chap.verificationReport || {})
+          JSON.stringify(chap.verificationReport || {}),
+          JSON.stringify(chap.comments || [])
         ]);
       }
     }

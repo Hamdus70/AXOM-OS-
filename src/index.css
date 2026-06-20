@@ -7,3 +7,10 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+@utility academic-manuscript-sheet {
+  font-family: "Times New Roman", Times, Georgia, serif !important;
+  font-size: 12pt !important;
+  line-height: 2.0 !important;
+  padding: 1in !important;
+}
+
