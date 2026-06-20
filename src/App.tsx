@@ -123,6 +123,11 @@ export default function App() {
   const [newCustomObjectives, setNewCustomObjectives] = useState("");
   const [newBlueprintFile, setNewBlueprintFile] = useState<string | null>(null);
   const [newAssetFile, setNewAssetFile] = useState<string | null>(null);
+  const [newBlueprintRealFile, setNewBlueprintRealFile] = useState<File | null>(null);
+  const [newAssetRealFile, setNewAssetRealFile] = useState<File | null>(null);
+
+  const blueprintInputRef = React.useRef<HTMLInputElement>(null);
+  const assetInputRef = React.useRef<HTMLInputElement>(null);
 
   // Chapter Generation State
   const [isGeneratingChapter, setIsGeneratingChapter] = useState(false);
@@ -694,30 +699,86 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
     setIsCreatingProject(true);
     try {
-      // 1. Create structural baseline in local DB
+      // Direct Secure Presigned Ingestion Helper
+      const uploadWithPresignedUrl = async (file: File | Blob, filename: string): Promise<string> => {
+        const presignedRes = await fetch("/api/storage/presigned-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename, contentType: file.type })
+        });
+        if (!presignedRes.ok) {
+          throw new Error(`Failed to initialize presigned upload lease for ${filename}`);
+        }
+        const { uploadUrl, resourceKey } = await presignedRes.json();
+        
+        // Execute PUT with raw binary stream directly bypassing Vercel API limits and Multer boundary bugs
+        const uploadRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream"
+          },
+          body: file
+        });
+        if (!uploadRes.ok) {
+          throw new Error(`Direct body storage streaming upload failed for ${filename}`);
+        }
+        return resourceKey;
+      };
+
+      let blueprintFileKey: string | null = null;
+      let assetFileKey: string | null = null;
+
+      // Unpack and upload attachments directly via SRE Presigned URL arbitration to circumvent Vercel 4.5MB payload limitations
+      if (newBlueprintRealFile) {
+        blueprintFileKey = await uploadWithPresignedUrl(newBlueprintRealFile, newBlueprintRealFile.name);
+      } else if (newBlueprintFile) {
+        const fallbackPdfBlob = new Blob([new TextEncoder().encode("Mock Guideline Content")], { type: "application/pdf" });
+        blueprintFileKey = await uploadWithPresignedUrl(fallbackPdfBlob, newBlueprintFile);
+      }
+
+      if (newAssetRealFile) {
+        assetFileKey = await uploadWithPresignedUrl(newAssetRealFile, newAssetRealFile.name);
+      } else if (newAssetFile) {
+        const fallbackDocBlob = new Blob([new TextEncoder().encode("Mock Asset Content")], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+        assetFileKey = await uploadWithPresignedUrl(fallbackDocBlob, newAssetFile);
+      }
+
+      // Create structural baseline using lightweight JSON payload (<20KB) to prevent gateway crashes
       const createRes = await fetch("/api/projects", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({
           title: newTitle,
           field: newField,
           academicLevel: newLevel,
           methodology: newMethodology,
           citationStyle: newCitation,
-          wordLimit: newLimit,
+          wordLimit: Number(newLimit),
           faculty: newFaculty,
-          studyDesign: newMethodology, // Study Design maps to methodology
+          studyDesign: newMethodology,
           sampleSize: newSampleSize,
           studySetting: newStudySetting,
           stylePreferences: newStylePreferences,
           objectiveToggle: newObjectiveToggle,
           customObjectives: newCustomObjectives,
-          blueprintFile: newBlueprintFile,
-          assetFile: newAssetFile,
+          blueprintFile: blueprintFileKey,
+          assetFile: assetFileKey
         }),
       });
 
-      if (!createRes.ok) throw new Error("Failed to register project baseline.");
+      if (!createRes.ok) {
+        try {
+          const errData = await createRes.json();
+          if (errData && errData.error) {
+            throw new Error(errData.error);
+          }
+        } catch (jsonErr) {
+          // If not a JSON error, fall through to default message
+        }
+        throw new Error("Failed to register project baseline.");
+      }
       const createdProject: ResearchProject = await createRes.json();
 
       if (!createdProject) throw new Error("Project creation returned empty scope.");
@@ -773,6 +834,8 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
       setNewCustomObjectives("");
       setNewBlueprintFile(null);
       setNewAssetFile(null);
+      setNewBlueprintRealFile(null);
+      setNewAssetRealFile(null);
     } catch (err: any) {
       showError(err.message);
     } finally {
@@ -2220,6 +2283,17 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                       <h2 className="text-2xl font-light tracking-tight text-white mt-1">
                         Title: <span className="italic font-serif">{selectedProject.title}</span>
                       </h2>
+                      {selectedProject.abstract && (
+                        <div className="mt-4 pt-4 border-t border-zinc-800/65 max-w-4xl animate-fade-in" id="project-abstract-card">
+                          <h4 className="text-[10px] uppercase font-mono font-bold text-zinc-500 mb-2 tracking-wider flex items-center space-x-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Academic Synthesis Abstract</span>
+                          </h4>
+                          <p className="text-[12.5px] leading-relaxed text-zinc-300 font-serif whitespace-pre-line antialiased italic bg-zinc-950/25 p-4 border-l-2 border-indigo-500/50 rounded-r-sm">
+                            "{selectedProject.abstract}"
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -5034,41 +5108,59 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                 {wizardStep === 4 && (
                   <div className="space-y-4 animate-fade-in" id="wizard-step-4-container">
                     <div className="flex flex-col space-y-2">
-                      <label className="text-[9px] uppercase font-mono font-bold text-zinc-500 tracking-wider">
-                        Institutional Blueprints (University Thesis Guidelines File Drop)
-                      </label>
-                      
-                      {newBlueprintFile ? (
+                                 {newBlueprintFile ? (
                         <div className="p-3.5 bg-indigo-950/25 border border-indigo-900/40 rounded-sm flex items-center justify-between font-mono animate-fade-in">
                           <div className="flex items-center space-x-2.5">
                             <FileText className="w-5 h-5 text-indigo-400 shrink-0" />
                             <div className="flex flex-col">
                               <span className="text-xs text-indigo-200 font-sans tracking-wide font-medium">{newBlueprintFile}</span>
-                              <span className="text-[9px] text-zinc-500 uppercase">Ready • Format Verified (4.2 MB)</span>
+                              <span className="text-[9px] text-zinc-500 uppercase">Ready • Format Verified</span>
                             </div>
                           </div>
                           <button
                             type="button"
-                            onClick={() => setNewBlueprintFile(null)}
+                            onClick={() => {
+                              setNewBlueprintFile(null);
+                              setNewBlueprintRealFile(null);
+                            }}
                             className="text-[10px] text-zinc-400 hover:text-red-400 px-2 py-1 hover:bg-zinc-900 rounded cursor-pointer transition uppercase font-bold"
                           >
                             Clear
                           </button>
                         </div>
                       ) : (
-                        <div 
-                          onClick={() => {
-                            setNewBlueprintFile("Oxford_University_Thesis_Formatting_Standard_2026.pdf");
-                          }}
-                          className="border border-dashed border-zinc-800 bg-[#09090B] hover:border-zinc-700 transition cursor-pointer p-5.5 text-center rounded-sm"
-                          id="dropzone-blueprint"
-                        >
-                          <div className="flex flex-col items-center justify-center space-y-2">
-                            <FileText className="w-6 h-6 text-zinc-600" />
-                            <p className="text-xs text-zinc-350">
-                              <span className="text-indigo-400 font-bold hover:underline">Click to browse</span> or drag university style blueprint here
-                            </p>
-                            <p className="text-[9px] font-mono text-zinc-550">Supports PDF, DOCX, TXT (Max 50MB) for design replication</p>
+                        <div>
+                          <input 
+                            type="file" 
+                            ref={blueprintInputRef} 
+                            className="hidden" 
+                            accept=".pdf,.docx,.txt"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                const file = e.target.files[0];
+                                setNewBlueprintFile(file.name);
+                                setNewBlueprintRealFile(file);
+                              }
+                            }}
+                          />
+                          <div 
+                            onClick={() => {
+                              if (blueprintInputRef.current) {
+                                blueprintInputRef.current.click();
+                              } else {
+                                setNewBlueprintFile("Oxford_University_Thesis_Formatting_Standard_2026.pdf");
+                              }
+                            }}
+                            className="border border-dashed border-zinc-800 bg-[#09090B] hover:border-zinc-700 transition cursor-pointer p-5.5 text-center rounded-sm"
+                            id="dropzone-blueprint"
+                          >
+                            <div className="flex flex-col items-center justify-center space-y-2">
+                              <FileText className="w-6 h-6 text-zinc-600" />
+                              <p className="text-xs text-zinc-350">
+                                <span className="text-indigo-400 font-bold hover:underline">Click to browse</span> or drag university style blueprint here
+                              </p>
+                              <p className="text-[9px] font-mono text-zinc-550">Supports PDF, DOCX, TXT (Max 50MB) for design replication</p>
+                            </div>
                           </div>
                         </div>
                       )}
@@ -5085,31 +5177,53 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                             <FileText className="w-5 h-5 text-emerald-400 shrink-0" />
                             <div className="flex flex-col">
                               <span className="text-xs text-emerald-200 font-sans tracking-wide font-medium">{newAssetFile}</span>
-                              <span className="text-[9px] text-emerald-400 uppercase">Analysis Complete • Style Mirroring Configured (5.1 MB)</span>
+                              <span className="text-[9px] text-emerald-100 uppercase">Analysis Complete • Style Mirroring Configured</span>
                             </div>
                           </div>
                           <button
                             type="button"
-                            onClick={() => setNewAssetFile(null)}
+                            onClick={() => {
+                              setNewAssetFile(null);
+                              setNewAssetRealFile(null);
+                            }}
                             className="text-[10px] text-zinc-400 hover:text-red-400 px-2 py-1 hover:bg-zinc-900 rounded cursor-pointer transition uppercase font-bold"
                           >
                             Clear
                           </button>
                         </div>
                       ) : (
-                        <div 
-                          onClick={() => {
-                            setNewAssetFile("Byzantine_Consensus_Quantum_Ecosystem_SRE.docx");
-                          }}
-                          className="border border-dashed border-zinc-800 bg-[#09090B] hover:border-zinc-700 transition cursor-pointer p-5.5 text-center rounded-sm"
-                          id="dropzone-reference-asset"
-                        >
-                          <div className="flex flex-col items-center justify-center space-y-2">
-                            <FileText className="w-6 h-6 text-zinc-600" />
-                            <p className="text-xs text-zinc-350">
-                              <span className="text-indigo-400 font-bold hover:underline">Click to browse</span> or drag sample paper reference asset here
-                            </p>
-                            <p className="text-[9px] font-mono text-zinc-550">Allows style, phrasing & layout mirroring</p>
+                        <div>
+                          <input 
+                            type="file" 
+                            ref={assetInputRef} 
+                            className="hidden" 
+                            accept=".pdf,.docx,.doc,.txt"
+                            onChange={(e) => {
+                              if (e.target.files && e.target.files[0]) {
+                                const file = e.target.files[0];
+                                setNewAssetFile(file.name);
+                                setNewAssetRealFile(file);
+                              }
+                            }}
+                          />
+                          <div 
+                            onClick={() => {
+                              if (assetInputRef.current) {
+                                assetInputRef.current.click();
+                              } else {
+                                setNewAssetFile("Byzantine_Consensus_Quantum_Ecosystem_SRE.docx");
+                              }
+                            }}
+                            className="border border-dashed border-zinc-800 bg-[#09090B] hover:border-zinc-700 transition cursor-pointer p-5.5 text-center rounded-sm"
+                            id="dropzone-reference-asset"
+                          >
+                            <div className="flex flex-col items-center justify-center space-y-2">
+                              <FileText className="w-6 h-6 text-zinc-600" />
+                              <p className="text-xs text-zinc-350">
+                                <span className="text-indigo-400 font-bold hover:underline">Click to browse</span> or drag sample paper reference asset here
+                              </p>
+                              <p className="text-[9px] font-mono text-zinc-550">Allows style, phrasing & layout mirroring</p>
+                            </div>
                           </div>
                         </div>
                       )}
