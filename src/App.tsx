@@ -1455,6 +1455,116 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     document.body.removeChild(element);
   };
 
+  // Academic format high-fidelity PDF downloader leveraging browser print-to-PDF styles
+  const downloadAcademicPdf = (title: string, content: string) => {
+    const lines = content.split("\n");
+    let htmlContent = "";
+    let inList = false;
+
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        if (inList) {
+          htmlContent += "</ul>\n";
+          inList = false;
+        }
+        return;
+      }
+
+      if (trimmed.startsWith("# ")) {
+        htmlContent += `<h1 style="font-size: 16pt; text-align: center; margin-top: 24pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif; text-transform: uppercase;">${trimmed.replace("# ", "")}</h1>\n`;
+      } else if (trimmed.startsWith("## ")) {
+        htmlContent += `<h2 style="font-size: 14pt; margin-top: 18pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("## ", "")}</h2>\n`;
+      } else if (trimmed.startsWith("### ")) {
+        htmlContent += `<h3 style="font-size: 12pt; margin-top: 12pt; margin-bottom: 6pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("### ", "")}</h3>\n`;
+      } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        if (!inList) {
+          htmlContent += `<ul style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          inList = true;
+        }
+        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.substring(2)}</li>\n`;
+      } else if (trimmed.match(/^\d+\.\s/)) {
+        if (!inList) {
+          htmlContent += `<ol style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          inList = true;
+        }
+        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.replace(/^\d+\.\s/, "")}</li>\n`;
+      } else if (trimmed.startsWith("|")) {
+        htmlContent += `<div style="margin: 12pt 0; text-align: center; font-family: 'Times New Roman', Times, serif;"><table border="1" cellspacing="0" cellpadding="6" style="margin: 0 auto; border-collapse: collapse; font-size: 11pt; line-height: 1.5; width: 100%;">`;
+        const rows = line.split("|").map(cell => cell.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
+        htmlContent += `<tr>` + rows.map(r => `<th style="border: 1px solid #777; background-color: #f2f2f2;">${r}</th>`).join("") + `</tr>`;
+        htmlContent += `</table></div>`;
+      } else {
+        if (inList) {
+          htmlContent += "</ul>\n";
+          inList = false;
+        }
+        htmlContent += `<p style="font-size: 12pt; line-height: 2.0; text-indent: 0.5in; margin-bottom: 12pt; text-align: justify; font-family: 'Times New Roman', Times, serif;">${trimmed}</p>\n`;
+      }
+    });
+
+    const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  @page {
+    size: letter;
+    margin: 1in;
+  }
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 12pt;
+    line-height: 2.0;
+    margin: 0;
+    padding: 0;
+    color: #000;
+    background-color: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @media print {
+    body {
+      margin: 0;
+      padding: 0;
+    }
+  }
+</style>
+</head>
+<body>
+  ${htmlContent}
+</body>
+</html>`;
+
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow || iframe.contentDocument;
+    if (doc) {
+      const d = (iframe.contentDocument || iframe.contentWindow?.document);
+      if (d) {
+        d.open();
+        d.write(fullHtml);
+        d.close();
+        
+        setTimeout(() => {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+          }, 1000);
+        }, 500);
+      }
+    }
+  };
+
   // Modern background network overlay
   const renderBackgroundGrid = () => (
     <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
@@ -2761,6 +2871,13 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                   title="Download MS Word styled with Times New Roman, Double Spacing, 1in Margins"
                                 >
                                   Export Word (.doc)
+                                </button>
+                                <button
+                                  onClick={() => downloadAcademicPdf(activeOutline.title, editorContent)}
+                                  className="px-2 py-1 border border-red-950 bg-red-950/30 hover:bg-red-950/50 text-red-400 border-red-900/60 text-[10px] font-mono tracking-tight transition font-bold"
+                                  title="Download High-Fidelity PDF styled with Times New Roman, Double Spacing, 1in Margins"
+                                >
+                                  Export PDF (.pdf)
                                 </button>
                                 <button
                                   onClick={() => {

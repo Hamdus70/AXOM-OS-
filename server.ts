@@ -7,6 +7,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import multer from "multer";
+import { getPool } from "./src/lib/db.js";
 
 dotenv.config();
 
@@ -845,6 +846,44 @@ app.put("/api/storage/upload", express.raw({ type: "*/*", limit: "50mb" }), asyn
   } catch (err: any) {
     console.error("AXOM Direct Storage Upload crash:", err);
     return res.status(500).json({ error: "Internal file streaming ingestion failure." });
+  }
+});
+
+app.post("/api/project/initialize", async (req, res) => {
+  try {
+    const { 
+      title, 
+      faculty, 
+      methodology, 
+      citationStyle, 
+      sampleSize, 
+      studySetting, 
+      customObjectives, 
+      objectiveToggle, 
+      blueprintFile, 
+      assetFile 
+    } = req.body;
+    const pool = getPool();
+    const result = await pool.query(
+      `INSERT INTO projects (title, faculty, methodology, citation_style, sample_size, study_setting, objectives, blueprint_file_key, asset_file_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        title || "New Project", 
+        faculty || "", 
+        methodology || "", 
+        citationStyle || "", 
+        sampleSize || "", 
+        studySetting || "", 
+        customObjectives || "", 
+        blueprintFile || null, 
+        assetFile || null
+      ]
+    );
+    res.json({ success: true, project_id: result.rows[0].id });
+  } catch (err) {
+    console.error("Database registration failed:", err);
+    res.status(500).json({ success: false, error: "DATABASE_CONNECTION_FAILURE" });
   }
 });
 
