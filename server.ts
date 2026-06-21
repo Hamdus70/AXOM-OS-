@@ -812,7 +812,9 @@ async function loadProjects(): Promise<ResearchProject[]> {
       const data = fs.readFileSync(STORAGE_PATH, "utf-8");
       return JSON.parse(data);
     } else {
-      fs.writeFileSync(STORAGE_PATH, JSON.stringify(SEED_PROJECTS, null, 2));
+      if (!process.env.DATABASE_URL) {
+        fs.writeFileSync(STORAGE_PATH, JSON.stringify(SEED_PROJECTS, null, 2));
+      }
       return SEED_PROJECTS as any[];
     }
   } catch (err) {
@@ -862,8 +864,9 @@ async function saveProjects(projects: ResearchProject[]) {
       for (const prj of sanitizedProjects) {
         await saveOrUpdateProject(prj);
       }
+    } else {
+      fs.writeFileSync(STORAGE_PATH, JSON.stringify(sanitizedProjects, null, 2));
     }
-    fs.writeFileSync(STORAGE_PATH, JSON.stringify(sanitizedProjects, null, 2));
   } catch (err) {
     console.error("AXOM OS Backend: Error writing projects state:", err);
   }

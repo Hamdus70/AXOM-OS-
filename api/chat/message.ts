@@ -1,10 +1,12 @@
+import { GoogleGenAI } from "@google/genai";
+
 export const config = {
   runtime: "edge", // Bypasses the 10-second serverless execution cap completely
 };
 
 /**
  * High-Performance, Non-Blocking Serverless Chat Handler
- * Runs on the Vercel Edge Runtime to guarantee sub-500ms handshakes and defeat cold starts.
+ * Runs on the Vercel Edge Runtime using modern @google/genai SDK.
  */
 export default async function handler(req: any) {
   if (req.method !== "POST") {
@@ -13,8 +15,6 @@ export default async function handler(req: any) {
       headers: { "Content-Type": "application/json" },
     });
   }
-
-  let userMessages: any[] = [];
 
   try {
     const { messages } = await req.json();
@@ -25,14 +25,24 @@ export default async function handler(req: any) {
       });
     }
 
-    // Capture the latest user messages for fallback offline processing
-    userMessages = messages.filter((m: any) => m.role === "user");
-
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-      console.warn("Vercel Edge Chat: GEMINI_API_KEY not configured. Falling back to structured heuristic engine.");
-      return runStructuredFallback(userMessages);
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.trim() === "") {
+      console.warn("Vercel Edge Chat: GEMINI_API_KEY is not configured.");
+      return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
+
+    // 1. Initialize modern Gemini SDK client inside the function execution lifecycle
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
 
     // Format messages mapping role to parts according to Gemini structural specification
     const contents = messages.map((m: any) => ({
@@ -47,19 +57,14 @@ export default async function handler(req: any) {
       });
     }
 
-    // Bypasses execution cap by performing a lightweight fetch directly to the official Google Gemini endpoint
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents,
-          systemInstruction: {
-            parts: [{
-              text: `You are an Expert Academic Dean, Elite Research Consultant, and Senior Conversational AI Architect specializing in research methodology validation. Your task is to act as the "AXOM OS Strategic Onboarding Assistant"—a conversational AI chatbot that interviews students to gather, refine, and lock down every variable required to initialize a flawless, publication-grade research baseline.
+    // 2. Wrap client call in protective try-catch for external network drops and timeouts
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents,
+        config: {
+          systemInstruction: `You are an Expert Academic Dean, Elite Research Consultant, and Senior Conversational AI Architect specializing in research methodology validation. Your task is to act as the "AXOM OS Strategic Onboarding Assistant"—a conversational AI chatbot that interviews students to gather, refine, and lock down every variable required to initialize a flawless, publication-grade research baseline.
 
 You must strictly execute this interview following the programmatic logic, validation rules, and discipline-specific matrices.
 
@@ -77,18 +82,17 @@ You must strictly execute this interview following the programmatic logic, valid
     "academic_tier": "Undergraduate | Postgraduate"
   }
 }`
-            }]
-          }
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Gemini API returned direct failure status: ${response.status}`);
+        }
+      });
+    } catch (apiError: any) {
+      console.error("Vercel Edge Chat API call failed:", apiError);
+      return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
-    const data = await response.json();
-    const rawResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const rawResponseText = response.text || "";
     
     let projectBaseline: any = null;
     if (rawResponseText.includes("project_baseline")) {
@@ -118,71 +122,10 @@ You must strictly execute this interview following the programmatic logic, valid
     });
 
   } catch (error: any) {
-    console.error("Vercel Catalog/Chat Read Error on Edge handler:", error);
-    
-    // Recovery path directly inside the edge loop: falling back to high fidelity simulated onboarding routine
-    return runStructuredFallback(userMessages);
+    console.error("Vercel Catalog/Chat General Error on Edge handler:", error);
+    return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
-}
-
-/**
- * Resilient Backup Flow: Under 50ms processing latency to guarantee no execution exceptions occur.
- */
-function runStructuredFallback(userMessages: any[]) {
-  const stepCount = userMessages.length;
-  let replyText = "";
-  let projectBaseline: any = null;
-
-  if (stepCount === 0) {
-    replyText = "Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline. What is your proposed research topic?";
-  } else if (stepCount === 1) {
-    const topic = userMessages[0].text;
-    replyText = `Perfect! Your topic "${topic}" establishes a clear research domain.\n\nNext, please define your Academic Faculty or Department. For example, Clinical Nursing, Computer Engineering, Business Administration, or Social Studies. This allows me to align discipline-specific matrices.`;
-  } else if (stepCount === 2) {
-    const faculty = userMessages[1].text;
-    replyText = `Excellent, Faculty is established as: ${faculty}.\n\nNow, let's look at the Methodological Strategy. Do you propose a Quantitative, Qualitative, or Mixed-Methods study design?`;
-  } else if (stepCount === 3) {
-    const design = userMessages[2].text;
-    replyText = `Understood. Design methodology resolved: ${design}.\n\nNext, what is your specific geographical, institutional, or physical study setting? (For example: General Hospital Saki, Private Tech Hubs in Lagos, etc.).`;
-  } else if (stepCount === 4) {
-    const setting = userMessages[3].text;
-    replyText = `Pragmatic setting parameters locked: ${setting}.\n\nFinally, what citation style rules are mandated by your institution (APA, IEEE, MLA, or Harvard)? Also, confirm if you are an Undergraduate or Postgraduate candidate.`;
-  } else {
-    // Collect the details and authorize the baseline extraction JSON
-    const topic = userMessages[0]?.text || "GENERIC TOPIC INQUIRY";
-    const faculty = userMessages[1]?.text || "General Studies";
-    const design = userMessages[2]?.text || "Quantitative";
-    const setting = userMessages[3]?.text || "Clinical Setting";
-    const lastAnswer = userMessages[4]?.text || "APA Postgraduate";
-    
-    const citation = lastAnswer.toUpperCase().includes("IEEE") 
-      ? "IEEE" 
-      : lastAnswer.toUpperCase().includes("MLA") 
-      ? "MLA" 
-      : lastAnswer.toUpperCase().includes("HARVARD") 
-      ? "Harvard" 
-      : "APA";
-
-    const tier = lastAnswer.toUpperCase().includes("POST") ? "Postgraduate" : "Undergraduate";
-
-    replyText = `AXOM STRATEGIC ONBOARDING VERIFIED & COMPLETED SUCCESSFULLY!\n\nAll parameters have been authenticated. Here is your baseline card:\n- Title: ${topic.toUpperCase()}\n- Faculty: ${faculty}\n- Design: ${design}\n- Setting: ${setting}\n- Citation Style: ${citation}\n- Candidate Tier: ${tier}\n\nActivating baseline core files now...`;
-    
-    projectBaseline = {
-      title: topic.toUpperCase(),
-      faculty,
-      study_design: design,
-      setting,
-      citation_format: citation,
-      academic_tier: tier
-    };
-  }
-
-  return new Response(JSON.stringify({
-    text: replyText,
-    isComplete: !!projectBaseline,
-    projectBaseline
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
 }
