@@ -1,6 +1,8 @@
 {
+  "version": 2,
   "outputDirectory": "dist",
   "cleanUrls": true,
+  "trailingSlash": false,
   "functions": {
     "api/chat/message.ts": {
       "runtime": "edge"
@@ -23,7 +25,7 @@
       "destination": "/api/chat/message.ts"
     },
     {
-      "source": "/api/:path*",
+      "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {

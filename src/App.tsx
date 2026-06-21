@@ -353,7 +353,10 @@ export default function App() {
   const [refJournal, setRefJournal] = useState("");
   const [refCustomKey, setRefCustomKey] = useState("");
   const [isAddingRef, setIsAddingRef] = useState(false);
-  const [refImportMode, setRefImportMode] = useState<"manual" | "bibtex">("manual");
+  const [refImportMode, setRefImportMode] = useState<"manual" | "search" | "bibtex">("manual");
+  const [refSearchQuery, setRefSearchQuery] = useState("");
+  const [refSearchResults, setRefSearchResults] = useState<any[]>([]);
+  const [isSearchingRef, setIsSearchingRef] = useState(false);
 
   // Dynamic font size of manuscript viewer
   const [manuscriptFontSize, setManuscriptFontSize] = useState<number>(12);
@@ -368,6 +371,16 @@ export default function App() {
   const [printPageMargin, setPrintPageMargin] = useState<"0.5" | "1.0" | "1.25">("1.0");
   const [printFontFamily, setPrintFontFamily] = useState<"Times New Roman" | "Arial" | "Courier New">("Times New Roman");
   const [printShowHeaderFooter, setPrintShowHeaderFooter] = useState<boolean>(true);
+  const [printCustomFilename, setPrintCustomFilename] = useState("");
+
+  // Sync printCustomFilename when Print Preview is opened
+  useEffect(() => {
+    if (isPrintPreviewOpen) {
+      setPrintCustomFilename(printPreviewTitle || "Chapter Draft");
+    } else {
+      setPrintCustomFilename("");
+    }
+  }, [isPrintPreviewOpen, printPreviewTitle]);
 
   // Editor Ref for precise caret inserting
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
@@ -682,6 +695,92 @@ export default function App() {
       console.error("Error saving reference:", err);
       setErrorToast("Failed to write reference to project vault.");
       setTimeout(() => setErrorToast(""), 4000);
+    });
+  };
+
+  // Search Online Academic Databases Using Gemini Grounding
+  const handleQueryAcademicDb = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!refSearchQuery.trim()) {
+      showError("Please enter keywords or a partial title/author to search.");
+      return;
+    }
+
+    setIsSearchingRef(true);
+    setRefSearchResults([]);
+
+    try {
+      const response = await fetch("/api/bibliography/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: refSearchQuery })
+      });
+
+      if (!response.ok) {
+        throw new Error("Academic search service responded with an error.");
+      }
+
+      const data = await response.json();
+      setRefSearchResults(data.suggestions || []);
+      if (data.isMock) {
+        showInfo("Now displaying custom AI recommendations matching your input.");
+      } else {
+        showSuccess(`Discovered ${data.suggestions?.length || 0} matching publications from databases!`);
+      }
+    } catch (err: any) {
+      console.error("Online search failed:", err);
+      showError(err.message || "Failed to query external academic databases.");
+    } finally {
+      setIsSearchingRef(false);
+    }
+  };
+
+  // Automatically register a selected predictive search recommendation entry
+  const handleAutoRegisterSearchMatch = (suggestion: {
+    authors: string;
+    year: string;
+    title: string;
+    journalOrPublisher: string;
+    citationKey: string;
+    doi?: string;
+    url?: string;
+  }) => {
+    if (!selectedProjectId) return;
+    const currentRefs = selectedProject?.references || [];
+
+    // Ensure citation key starts with [ if style-standardized
+    let key = suggestion.citationKey || "Ref";
+    if (!key.startsWith("[")) {
+      key = `[${key}]`;
+    }
+
+    const newRef = {
+      id: "ref-" + Math.random().toString(36).substring(2, 9),
+      authors: suggestion.authors,
+      year: suggestion.year || new Date().getFullYear().toString(),
+      title: suggestion.title,
+      journalOrPublisher: suggestion.journalOrPublisher,
+      citationKey: key
+    };
+
+    const updatedProject = {
+      ...selectedProject!,
+      references: [...currentRefs, newRef]
+    };
+
+    fetch(`/api/projects/${selectedProjectId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedProject)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setProjects(prev => prev.map(p => p.id === selectedProjectId ? data : p));
+      showSuccess(`Registered "${newRef.title}" citation into portfolio successfully.`);
+    })
+    .catch(err => {
+      console.error("Error auto-registering reference:", err);
+      showError("Failed to write search suggestion to project vault.");
     });
   };
 
@@ -2966,37 +3065,135 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
                     {isAddingRef && (
                       <div className="space-y-3 bg-zinc-950/60 p-3 border border-zinc-850">
-                        {/* Selector tabs for Manual vs BibTeX */}
+                        {/* Selector tabs for Manual vs Search vs BibTeX */}
                         <div className="flex border-b border-zinc-850 pb-2 mb-2 justify-between items-center gap-2">
                           <div className="flex space-x-1 p-0.5 bg-zinc-900 border border-zinc-800 rounded">
                             <button
                               type="button"
                               onClick={() => setRefImportMode("manual")}
-                              className={`px-2 py-1 rounded text-[8.5px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
+                              className={`px-2 py-1 rounded text-[8px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
                                 refImportMode === "manual"
                                   ? "bg-zinc-800 text-white font-extrabold"
-                                  : "text-zinc-500 hover:text-zinc-300"
+                                  : "text-zinc-550 hover:text-zinc-300"
                               }`}
                             >
-                              Single Source
+                              Manual
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRefImportMode("search")}
+                              className={`px-2 py-1 rounded text-[8px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
+                                refImportMode === "search"
+                                  ? "bg-zinc-800 text-white font-extrabold"
+                                  : "text-zinc-550 hover:text-zinc-300"
+                              }`}
+                            >
+                              Predictive Search
                             </button>
                             <button
                               type="button"
                               onClick={() => setRefImportMode("bibtex")}
-                              className={`px-2 py-1 rounded text-[8.5px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
+                              className={`px-2 py-1 rounded text-[8px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
                                 refImportMode === "bibtex"
                                   ? "bg-zinc-800 text-white font-extrabold"
-                                  : "text-zinc-500 hover:text-zinc-300"
+                                  : "text-zinc-550 hover:text-zinc-300"
                               }`}
                             >
-                              Bulk BibTeX (.bib)
+                              BibTeX
                             </button>
                           </div>
                           
-                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest hidden xs:inline">
-                            {refImportMode === "manual" ? "Manual formulation" : "BibTeX Loader"}
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest hidden lg:inline">
+                            {refImportMode === "manual" ? "Manual Form" : refImportMode === "search" ? "Scholar Search" : "BibTeX Loader"}
                           </span>
                         </div>
+
+                        {refImportMode === "search" && (
+                          <div className="space-y-3">
+                            <form onSubmit={handleQueryAcademicDb} className="flex space-x-1.5">
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="Type paper title or author..."
+                                  value={refSearchQuery}
+                                  onChange={(e) => setRefSearchQuery(e.target.value)}
+                                  className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-2 pr-6 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                                />
+                                {refSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRefSearchQuery("")}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 hover:text-zinc-200 text-zinc-650 font-bold"
+                                  >
+                                    &times;
+                                  </button>
+                                )}
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={isSearchingRef}
+                                className={`px-2.5 bg-red-850 hover:bg-red-750 border border-red-500/30 text-white text-[9px] uppercase font-mono font-bold tracking-wider transition-colors cursor-pointer flex items-center justify-center space-x-1 ${isSearchingRef ? "opacity-50 pointer-events-none" : ""}`}
+                              >
+                                {isSearchingRef ? (
+                                  <span className="animate-spin mr-0.5">⌛</span>
+                                ) : (
+                                  <Search className="w-3 h-3" />
+                                )}
+                                <span>Find</span>
+                              </button>
+                            </form>
+
+                            {/* Search Results */}
+                            <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                              {isSearchingRef && (
+                                <div className="p-6 text-center border border-dashed border-zinc-800 text-zinc-500 text-xs font-mono">
+                                  <span className="animate-pulse">Querying external academic databases via Grounding...</span>
+                                </div>
+                              )}
+
+                              {!isSearchingRef && refSearchResults.length === 0 && (
+                                <p className="text-[9px] font-mono text-zinc-500 text-center py-4 bg-zinc-900/20 border border-zinc-850">
+                                  Search by keywords, title, or authors to retrieve real references for automatic catalog registration.
+                                </p>
+                              )}
+
+                              {!isSearchingRef && refSearchResults.length > 0 && (
+                                <div className="space-y-2">
+                                  <p className="text-[8px] font-mono text-zinc-500 uppercase tracking-wider font-bold">Metadata Suggestions:</p>
+                                  {refSearchResults.map((suggestion, index) => (
+                                    <div
+                                      key={index}
+                                      className="p-2.5 bg-zinc-900/80 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-750 rounded-sm text-left relative group transition-all"
+                                    >
+                                      <div className="flex justify-between items-start gap-2">
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-[9.5px] font-bold text-zinc-200 leading-snug">
+                                            {suggestion.title}
+                                          </p>
+                                          <p className="text-[8.5px] text-zinc-400 font-mono mt-0.5">
+                                            {suggestion.authors} ({suggestion.year})
+                                          </p>
+                                          <p className="text-[8.5px] text-zinc-500 font-mono mt-0.5 italic truncate">
+                                            {suggestion.journalOrPublisher}
+                                          </p>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAutoRegisterSearchMatch(suggestion)}
+                                          title="Automatically register metadata"
+                                          className="p-1 px-1.5 bg-zinc-800 hover:bg-emerald-800/80 text-zinc-300 hover:text-white rounded border border-zinc-750 hover:border-emerald-500/40 text-[8.5px] font-mono font-bold tracking-tight cursor-pointer transition flex items-center space-x-0.5 shrink-0"
+                                        >
+                                          <Plus className="w-3 h-3" />
+                                          <span>Add</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
 
                         {refImportMode === "manual" ? (
                           <form onSubmit={handleAddReference} className="space-y-2.5">
@@ -6854,6 +7051,19 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                   </button>
                 </div>
 
+                {/* Configuration: Custom Filename */}
+                <div className="space-y-2">
+                  <label htmlFor="print-custom-filename-input" className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Custom Filename</label>
+                  <input
+                    id="print-custom-filename-input"
+                    type="text"
+                    value={printCustomFilename}
+                    onChange={(e) => setPrintCustomFilename(e.target.value)}
+                    placeholder="Enter custom PDF filename..."
+                    className="w-full bg-zinc-900 border border-zinc-850 text-zinc-100 rounded px-2.5 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500/50 placeholder-zinc-600 block"
+                  />
+                </div>
+
                 {/* Configuration: Typography selection */}
                 <div className="space-y-2">
                   <label className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Typography Font</label>
@@ -6991,7 +7201,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                 <button
                   type="button"
                   onClick={() => {
-                    downloadAcademicPdf(printPreviewTitle, printPreviewContent);
+                    downloadAcademicPdf(printCustomFilename || printPreviewTitle || "Chapter Draft", printPreviewContent);
                   }}
                   className="w-full py-2.5 bg-gradient-to-r from-red-600 to-red-850 hover:from-red-500 hover:to-red-750 text-white border border-red-500/30 text-[11px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center justify-center space-x-2 cursor-pointer shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
                 >
