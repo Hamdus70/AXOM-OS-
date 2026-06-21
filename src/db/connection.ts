@@ -140,6 +140,7 @@ export async function bootstrapDatabaseSchema(): Promise<void> {
             blueprint_file TEXT,
             asset_file TEXT,
             abstract TEXT,
+            data_tables JSONB NOT NULL DEFAULT '[]'::jsonb,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
           );
         `);
@@ -169,6 +170,10 @@ export async function bootstrapDatabaseSchema(): Promise<void> {
 
         await client.query(`
           ALTER TABLE chapters ADD COLUMN IF NOT EXISTS comments JSONB NOT NULL DEFAULT '[]'::jsonb;
+        `);
+
+        await client.query(`
+          ALTER TABLE projects ADD COLUMN IF NOT EXISTS data_tables JSONB NOT NULL DEFAULT '[]'::jsonb;
         `);
 
         // Create Indices for high throughput project-specific fetches
@@ -404,7 +409,7 @@ export async function fetchAllProjects(): Promise<any[]> {
         sample_size as "sampleSize", study_setting as "studySetting", 
         style_preferences as "stylePreferences", objective_toggle as "objectiveToggle", 
         custom_objectives as "customObjectives", blueprint_file as "blueprintFile", 
-        asset_file as "assetFile", abstract, created_at as "createdAt"
+        asset_file as "assetFile", data_tables as "dataTables", abstract, created_at as "createdAt"
       FROM projects 
       ORDER BY created_at DESC
     `);
@@ -475,7 +480,7 @@ export async function fetchProjectById(id: string): Promise<any | null> {
         sample_size as "sampleSize", study_setting as "studySetting", 
         style_preferences as "stylePreferences", objective_toggle as "objectiveToggle", 
         custom_objectives as "customObjectives", blueprint_file as "blueprintFile", 
-        asset_file as "assetFile", abstract, created_at as "createdAt"
+        asset_file as "assetFile", data_tables as "dataTables", abstract, created_at as "createdAt"
       FROM projects 
       WHERE id = $1
     `, [id]);
@@ -539,8 +544,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
         id, title, field, academic_level, methodology, citation_style, 
         word_limit, word_count, progress, outline, faculty, 
         study_design, sample_size, study_setting, style_preferences, 
-        objective_toggle, custom_objectives, blueprint_file, asset_file, abstract
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        objective_toggle, custom_objectives, blueprint_file, asset_file, abstract, data_tables
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       ON CONFLICT (id) DO UPDATE SET
         title = EXCLUDED.title,
         field = EXCLUDED.field,
@@ -560,7 +565,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
         custom_objectives = EXCLUDED.custom_objectives,
         blueprint_file = EXCLUDED.blueprint_file,
         asset_file = EXCLUDED.asset_file,
-        abstract = EXCLUDED.abstract
+        abstract = EXCLUDED.abstract,
+        data_tables = EXCLUDED.data_tables
     `, [
       project.id,
       project.title,
@@ -581,7 +587,8 @@ export async function saveOrUpdateProject(project: any): Promise<void> {
       project.customObjectives || "",
       project.blueprintFile || null,
       project.assetFile || null,
-      project.abstract || null
+      project.abstract || null,
+      JSON.stringify(project.dataTables || [])
     ]);
 
     // Save and align associated Chapters safely

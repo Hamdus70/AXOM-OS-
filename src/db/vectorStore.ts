@@ -20,7 +20,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   if (ai) {
     try {
       const response = await ai.models.embedContent({
-        model: "text-embedding-004",
+        model: "gemini-embedding-2-preview",
         contents: text,
       }) as any;
       const values = response?.embedding?.values || response?.embeddings?.[0]?.values;
@@ -186,7 +186,7 @@ export async function storeDocumentGuideline(projectId: string, filename: string
     let chunksProcessed = 0;
 
     for (const chunk of chunks) {
-      // 3. Pipeline generation of text embeddings via Gemini text-embedding-004
+      // 3. Pipeline generation of text embeddings via Gemini gemini-embedding-2-preview
       const vector = await generateEmbedding(chunk);
 
       // Check for pgvector capability by querying type definition

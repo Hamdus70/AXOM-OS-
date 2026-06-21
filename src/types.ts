@@ -92,6 +92,16 @@ export interface ResearchProject {
   customObjectives?: string;
   blueprintFile?: string | null;
   assetFile?: string | null;
+  dataTables?: DataTable[];
+}
+
+export interface DataTable {
+  id: string;
+  name: string;
+  description: string;
+  headers: string[];
+  rows: string[][];
+  createdAt: string;
 }
 
 export interface ContainerInstance {

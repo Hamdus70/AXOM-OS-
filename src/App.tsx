@@ -31,7 +31,8 @@ import {
   Moon,
   FileSpreadsheet
 } from "lucide-react";
-import { ResearchProject, ClusterMetrics } from "./types";
+import { ResearchProject, ClusterMetrics, DataTable } from "./types";
+import DataTableModal from "./components/DataTableModal";
 
 interface UserAuth {
   id: string;
@@ -113,8 +114,162 @@ export default function App() {
   const [newLimit, setNewLimit] = useState(10000);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
 
+  // States for Chapter-Specific Word Limits Customization
+  const [useCustomChapterLimits, setUseCustomChapterLimits] = useState(false);
+  const [chap1Limit, setChap1Limit] = useState(2000);
+  const [chap2Limit, setChap2Limit] = useState(3000);
+  const [chap3Limit, setChap3Limit] = useState(2000);
+  const [chap4Limit, setChap4Limit] = useState(2000);
+  const [chap5Limit, setChap5Limit] = useState(1000);
+
+  // Auto-citation suggestions helper state
+  const [citationSearchQuery, setCitationSearchQuery] = useState("");
+  const [showCitationSuggestions, setShowCitationSuggestions] = useState(false);
+
+  // Synchronize target project wordLimit from custom chapter goals on-the-fly
+  useEffect(() => {
+    if (useCustomChapterLimits) {
+      setNewLimit(chap1Limit + chap2Limit + chap3Limit + chap4Limit + chap5Limit);
+    }
+  }, [chap1Limit, chap2Limit, chap3Limit, chap4Limit, chap5Limit, useCustomChapterLimits]);
+
   // Onboarding Wizard Config States
   const [wizardStep, setWizardStep] = useState(1);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingMessages, setOnboardingMessages] = useState<{ role: "user" | "model"; text: string }[]>([]);
+  const [onboardingInput, setOnboardingInput] = useState("");
+  const [isOnboardingSending, setIsOnboardingSending] = useState(false);
+  const [isOnboardingCreating, setIsOnboardingCreating] = useState(false);
+
+  useEffect(() => {
+    if (isOnboardingOpen && onboardingMessages.length === 0) {
+      const fetchWelcome = async () => {
+        setIsOnboardingSending(true);
+        try {
+          const res = await fetch("/api/onboarding/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: [] })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setOnboardingMessages([{ role: "model", text: data.text }]);
+          } else {
+            setOnboardingMessages([{ role: "model", text: "Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline. What is your proposed research topic?" }]);
+          }
+        } catch (err) {
+          setOnboardingMessages([{ role: "model", text: "Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline. What is your proposed research topic?" }]);
+        } finally {
+          setIsOnboardingSending(false);
+        }
+      };
+      fetchWelcome();
+    }
+  }, [isOnboardingOpen]);
+
+  const handleSendOnboardingMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onboardingInput.trim() || isOnboardingSending || isOnboardingCreating) return;
+
+    const userMsg = onboardingInput;
+    setOnboardingInput("");
+
+    const updatedMessages = [...onboardingMessages, { role: "user" as const, text: userMsg }];
+    setOnboardingMessages(updatedMessages);
+    setIsOnboardingSending(true);
+
+    try {
+      const res = await fetch("/api/onboarding/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: updatedMessages })
+      });
+
+      if (!res.ok) throw new Error("Onboarding transmission failure.");
+
+      const data = await res.json();
+      const modelReply = data.text;
+      
+      setOnboardingMessages(prev => [...prev, { role: "model", text: modelReply }]);
+
+      if (data.isComplete && data.projectBaseline) {
+        setIsOnboardingCreating(true);
+        const baseline = data.projectBaseline;
+        
+        const createRes = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: baseline.title || "Untitled Onboarding Project",
+            field: baseline.faculty || "Academic Inquiry",
+            academicLevel: baseline.academic_tier === "Postgraduate" ? "Postgraduate" : "Undergraduate",
+            methodology: baseline.study_design || "Quantitative",
+            citationStyle: baseline.citation_format === "IEEE" ? "IEEE" : baseline.citation_format === "MLA" ? "MLA 9th Edition" : baseline.citation_format === "Harvard" ? "Harvard" : "APA 7th Edition",
+            wordLimit: baseline.academic_tier === "Postgraduate" ? 10000 : 8000,
+            faculty: baseline.faculty || "General Studies",
+            studyDesign: baseline.study_design || "Quantitative",
+            studySetting: baseline.setting || "Clinical Setting",
+            sampleSize: "n=120 Cohorts / Subjects",
+            stylePreferences: `Standard ${baseline.citation_format || "APA"} alignment, structured layout.`,
+            objectiveToggle: "generate"
+          })
+        });
+
+        if (createRes.ok) {
+          const createdProject = await createRes.json();
+          showSuccess("Academic Baseline successfully unlocked and registered!");
+          
+          const outlineRes = await fetch("/api/generate-outline", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: createdProject.title,
+              field: createdProject.field,
+              academicLevel: createdProject.academicLevel,
+              methodology: createdProject.methodology,
+              citationStyle: createdProject.citationStyle
+            })
+          });
+
+          if (outlineRes.ok) {
+            const outlineData = await outlineRes.json();
+            const customOutline = (outlineData.outline || []);
+            
+            const updatedRes = await fetch(`/api/projects/${createdProject.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ outline: customOutline })
+            });
+
+            if (updatedRes.ok) {
+              const finishedProj = await updatedRes.json();
+              setProjects(prev => [...prev.filter(p => p.id !== createdProject.id), finishedProj]);
+              setSelectedProjectId(finishedProj.id);
+              setCurrentChapterKey("chapter1");
+            } else {
+              setProjects(prev => [...prev, createdProject]);
+              setSelectedProjectId(createdProject.id);
+            }
+          } else {
+            setProjects(prev => [...prev, createdProject]);
+            setSelectedProjectId(createdProject.id);
+          }
+          
+          setTimeout(() => {
+            setIsOnboardingOpen(false);
+          }, 3000);
+        } else {
+          showError("Could not automatically register baseline. Try using the manual builder.");
+        }
+      }
+    } catch (err: any) {
+      showError("Communication break on onboarding assistant: " + err.message);
+    } finally {
+      setIsOnboardingSending(false);
+      setIsOnboardingCreating(false);
+    }
+  };
+
   const [newFaculty, setNewFaculty] = useState("Engineering & Informatics");
   const [newSampleSize, setNewSampleSize] = useState("n=120 Cohorts / Subjects");
   const [newStudySetting, setNewStudySetting] = useState("Controlled Clinical Settings");
@@ -176,6 +331,10 @@ export default function App() {
   const [refJournal, setRefJournal] = useState("");
   const [refCustomKey, setRefCustomKey] = useState("");
   const [isAddingRef, setIsAddingRef] = useState(false);
+  const [refImportMode, setRefImportMode] = useState<"manual" | "bibtex">("manual");
+
+  // Dynamic font size of manuscript viewer
+  const [manuscriptFontSize, setManuscriptFontSize] = useState<number>(12);
 
   // Editor Ref for precise caret inserting
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
@@ -190,6 +349,7 @@ export default function App() {
   const [verificationFileSize, setVerificationFileSize] = useState(0);
   const [verificationContentRaw, setVerificationContentRaw] = useState("");
   const [isSplitDecisionOpen, setIsSplitDecisionOpen] = useState(false);
+  const [isDataTableModalOpen, setIsDataTableModalOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysisLogs, setAnalysisLogs] = useState<string[]>([]);
@@ -225,6 +385,221 @@ export default function App() {
     } else {
       return `(${primaryAuthor} ${cleanYear})`;
     }
+  };
+
+  // Helper to parse BibTeX entries from files, supporting complex types (articles, books, thesis, proceedings, techreports)
+  const parseBibTeX = (content: string) => {
+    const normalized = content.replace(/\r\n/g, "\n");
+    
+    // Support colons, hyphens, slashes, backslashes, periods and hashes in keys
+    const entryRegex = /@([a-zA-Z]+)\s*\{\s*([a-zA-Z0-9_\-:\.\\\/#]+)\s*,([\s\S]*?)(?=\n@|\n?$)/gi;
+    const parsedRefs: Array<{
+      authors: string;
+      year: string;
+      title: string;
+      journalOrPublisher: string;
+      citationKey: string;
+      doi?: string;
+      url?: string;
+    }> = [];
+
+    let match;
+    while ((match = entryRegex.exec(normalized)) !== null) {
+      const entryType = match[1].toLowerCase();
+      const rawKey = match[2];
+      const fieldsBody = match[3];
+
+      const fields: Record<string, string> = {};
+      
+      // Regex supporting single-line and multi-line fields enclosed in braces, double quotes, or naked values
+      const fieldRegex = /\s*([a-zA-Z0-9_\-]+)\s*=\s*(?:\{([\s\S]*?)\}|"([\s\S]*?)"|([^\s,}]+))/gi;
+      let fieldMatch;
+      while ((fieldMatch = fieldRegex.exec(fieldsBody)) !== null) {
+        const fieldName = fieldMatch[1].trim().toLowerCase();
+        let fieldValue = (fieldMatch[2] || fieldMatch[3] || fieldMatch[4] || "").trim();
+        
+        // Sanitize entry formatting
+        fieldValue = fieldValue.replace(/[\{\}\\]/g, "");
+        fieldValue = fieldValue.replace(/\s+/g, " ");
+        fields[fieldName] = fieldValue;
+      }
+
+      let authors = fields["author"] || fields["authors"] || "";
+      if (authors) {
+        authors = authors.split(/\s+and\s+/i).join(", ");
+      } else {
+        authors = "Unknown Authors";
+      }
+
+      // Enhanced mapping based on complex entry types
+      let journalOrPublisher = "";
+      if (entryType === "article") {
+        journalOrPublisher = fields["journal"] || fields["journaltitle"] || "Scholarly Journal";
+        if (fields["volume"]) journalOrPublisher += `, Vol. ${fields["volume"]}`;
+        if (fields["number"]) journalOrPublisher += `, No. ${fields["number"]}`;
+      } else if (entryType === "book" || entryType === "inbook") {
+        journalOrPublisher = fields["publisher"] || fields["institution"] || "Academic Press";
+        if (fields["address"]) journalOrPublisher += `, ${fields["address"]}`;
+      } else if (entryType === "inproceedings" || entryType === "proceedings" || entryType === "conference") {
+        journalOrPublisher = fields["booktitle"] || fields["series"] || "Conference Proceedings";
+      } else if (entryType === "phdthesis" || entryType === "mastersthesis") {
+        journalOrPublisher = fields["school"] || fields["institution"] || (entryType === "phdthesis" ? "PhD Dissertation" : "MSc Thesis");
+      } else if (entryType === "techreport") {
+        journalOrPublisher = fields["institution"] || fields["number"] || "Technical Report";
+      } else {
+        journalOrPublisher = fields["journal"] || fields["publisher"] || fields["booktitle"] || fields["school"] || fields["institution"] || fields["howpublished"] || "Scholarly Archive";
+      }
+
+      const title = fields["title"] || "Untitled Scholarly Work";
+      const year = fields["year"] || fields["date"]?.substring(0, 4) || new Date().getFullYear().toString();
+      const doi = fields["doi"];
+      const url = fields["url"] || fields["howpublished"];
+
+      parsedRefs.push({
+        authors,
+        year,
+        title,
+        journalOrPublisher,
+        citationKey: rawKey,
+        doi,
+        url
+      });
+    }
+
+    // Fallback: splitting legacy or non-multiline standard entries
+    if (parsedRefs.length === 0) {
+      const fallbackEntries = content.split(/@(?=[a-zA-Z]+)/);
+      fallbackEntries.forEach(entry => {
+        const trimmedEntry = entry.trim();
+        if (!trimmedEntry) return;
+        
+        const headerMatch = trimmedEntry.match(/^([a-zA-Z]+)\s*\{\s*([a-zA-Z0-9_\-:\.\\\/#]+)\s*,/);
+        if (!headerMatch) return;
+        
+        const entryType = headerMatch[1].toLowerCase();
+        const rawKey = headerMatch[2];
+        const fields: Record<string, string> = {};
+        const lines = trimmedEntry.split("\n");
+        
+        lines.forEach(line => {
+          const fieldMatch = line.match(/^\s*([a-zA-Z0-9_\-]+)\s*=\s*([\s\S]+)/);
+          if (fieldMatch) {
+            const fieldName = fieldMatch[1].trim().toLowerCase();
+            let value = fieldMatch[2].trim();
+            if (value.endsWith(",")) value = value.slice(0, -1).trim();
+            if (value.startsWith("{") && value.endsWith("}")) value = value.slice(1, -1).trim();
+            else if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1).trim();
+            value = value.replace(/[\{\}]/g, "");
+            fields[fieldName] = value;
+          }
+        });
+
+        let authors = fields["author"] || fields["authors"] || "Unknown Authors";
+        authors = authors.split(/\s+and\s+/i).join(", ");
+        const title = fields["title"] || "Untitled Document";
+        const year = fields["year"] || new Date().getFullYear().toString();
+        const journalOrPublisher = fields["journal"] || fields["publisher"] || fields["booktitle"] || fields["school"] || "Scholarly Archive";
+        const doi = fields["doi"];
+        const url = fields["url"];
+
+        parsedRefs.push({
+          authors,
+          year,
+          title,
+          journalOrPublisher,
+          citationKey: rawKey,
+          doi,
+          url
+        });
+      });
+    }
+
+    return parsedRefs;
+  };
+
+  // Bulk BibTeX reference importer
+  const handleBibtexImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedProjectId || !selectedProject) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text) {
+          setErrorToast("Empty file content. Could not read BibTeX entries.");
+          setTimeout(() => setErrorToast(""), 4000);
+          return;
+        }
+
+        const bibRefs = parseBibTeX(text);
+        if (bibRefs.length === 0) {
+          setErrorToast("No valid BibTeX @entries found in the uploaded file.");
+          setTimeout(() => setErrorToast(""), 4000);
+          return;
+        }
+
+        // Keep track of entries missing DOI or URL metadata to warn user
+        const missingMetadataKeys: string[] = [];
+        const currentRefs = selectedProject.references || [];
+        const formattedNewRefs = bibRefs.map((b) => {
+          const rawKey = b.citationKey ? b.citationKey.trim() : `ref-${Math.random().toString(36).substring(2, 6)}`;
+          const citationKey = `[${rawKey}]`;
+          
+          if (!b.doi && !b.url) {
+            missingMetadataKeys.push(rawKey);
+          }
+
+          return {
+            id: "ref-" + Math.random().toString(36).substring(2, 9),
+            authors: b.authors,
+            year: b.year,
+            title: b.title,
+            journalOrPublisher: b.journalOrPublisher,
+            citationKey: citationKey
+          };
+        });
+
+        const updatedProject = {
+          ...selectedProject,
+          references: [...currentRefs, ...formattedNewRefs]
+        };
+
+        showInfo(`Parsing and bulk importing ${formattedNewRefs.length} citations from .bib file...`);
+
+        fetch(`/api/projects/${selectedProjectId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedProject)
+        })
+        .then(res => res.json())
+        .then(data => {
+          setProjects(prev => prev.map(p => p.id === selectedProjectId ? data : p));
+          
+          if (missingMetadataKeys.length > 0) {
+            const listStr = missingMetadataKeys.slice(0, 3).map(k => `@${k}`).join(", ") + (missingMetadataKeys.length > 3 ? ` and ${missingMetadataKeys.length - 3} others` : "");
+            showInfo(`Bulk Import complete! Successfully saved ${formattedNewRefs.length} citations. Note: ${missingMetadataKeys.length} entries (${listStr}) are missing critical 'doi' or 'url' fields to maximize professional index score.`);
+          } else {
+            showSuccess(`Successfully bulk-imported ${formattedNewRefs.length} bibliographical citations with full DOI/URL metadata.`);
+          }
+          
+          setIsAddingRef(false);
+          if (e.target) {
+            e.target.value = "";
+          }
+        })
+        .catch(err => {
+          console.error("Error bulk saving references:", err);
+          setErrorToast("Failed to write imported bibtex list to project vault.");
+          setTimeout(() => setErrorToast(""), 4000);
+        });
+
+      } catch (err: any) {
+        setErrorToast("BibTeX Parser Error: " + err.message);
+        setTimeout(() => setErrorToast(""), 4000);
+      }
+    };
+    reader.readAsText(file);
   };
 
   // Add Reference Action
@@ -329,6 +704,42 @@ export default function App() {
     }, 50);
   };
 
+  // Auto-citation helper: replaces '[query' with the selected citation key
+  const injectAutoCitation = (citationKey: string) => {
+    if (!editorRef.current) {
+      setEditorContent(prev => prev + " " + citationKey);
+      setEditorSaveStatus("dirty");
+      setShowCitationSuggestions(false);
+      return;
+    }
+    
+    const textarea = editorRef.current;
+    const start = textarea.selectionStart;
+    const text = textarea.value;
+    const before = text.substring(0, start);
+    const after = text.substring(start, text.length);
+    
+    const lastOpenBracketIdx = before.lastIndexOf("[");
+    if (lastOpenBracketIdx !== -1) {
+      const cleanBefore = before.substring(0, lastOpenBracketIdx);
+      // Format the replacement. If citationKey does not start with '[', we can wrap it or keep it as is
+      const resolvedKey = citationKey;
+      const newContent = cleanBefore + resolvedKey + after;
+      setEditorContent(newContent);
+      setEditorSaveStatus("dirty");
+      setShowCitationSuggestions(false);
+      
+      setTimeout(() => {
+        textarea.focus();
+        const newCursor = cleanBefore.length + resolvedKey.length;
+        textarea.setSelectionRange(newCursor, newCursor);
+      }, 50);
+    } else {
+      injectCitation(citationKey);
+      setShowCitationSuggestions(false);
+    }
+  };
+
   // Helper to wrap selected text in markdown elements
   const wrapSelection = (prefix: string, suffix: string = "") => {
     if (!editorRef.current) {
@@ -357,16 +768,22 @@ export default function App() {
   };
 
   // Keep state values fresh inside refs for reliable, concurrent-safe keyboard shortcuts
-  const handleSaveEditorRef = React.useRef<() => any>(() => {});
+  const handleSaveEditorRef = React.useRef<(isAuto?: boolean) => any>(() => {});
   const editorSaveStatusRef = React.useRef(editorSaveStatus);
   const selectedProjectIdRef = React.useRef(selectedProjectId);
   const activeTabRef = React.useRef(activeTab);
+  const currentChapterKeyRef = React.useRef(currentChapterKey);
+  const selectedProjectRef = React.useRef(selectedProject);
+  const handleCycleChapterRef = React.useRef<(direction: "prev" | "next") => any>(() => {});
 
   React.useEffect(() => {
     handleSaveEditorRef.current = handleSaveEditor;
     editorSaveStatusRef.current = editorSaveStatus;
     selectedProjectIdRef.current = selectedProjectId;
     activeTabRef.current = activeTab;
+    currentChapterKeyRef.current = currentChapterKey;
+    selectedProjectRef.current = selectedProject;
+    handleCycleChapterRef.current = handleCycleChapter;
   });
 
   // Global Keyboard Shortcuts
@@ -381,6 +798,17 @@ export default function App() {
         e.preventDefault();
         if (selectedProjectIdRef.current && activeTabRef.current === "workspace" && editorSaveStatusRef.current === "dirty") {
           handleSaveEditorRef.current();
+        }
+      }
+
+      // Ctrl + Arrow keys or Alt + Arrow keys -> quickly cycle chapters
+      if (modifier || e.altKey) {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          handleCycleChapterRef.current("next");
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          handleCycleChapterRef.current("prev");
         }
       }
 
@@ -440,7 +868,7 @@ export default function App() {
 
     const timer = setTimeout(() => {
       if (handleSaveEditorRef.current) {
-        handleSaveEditorRef.current();
+        handleSaveEditorRef.current(true);
       }
     }, 5000);
 
@@ -609,7 +1037,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
   const exportVettedDocument = (id: string, format: "docx" | "pdf" | "csv" | "epub") => {
     if (!id) return;
     try {
-      showInfo(`Initializing direct download stream from server. Ephemeral RAM buffer will be wiped immediately.`);
+      showInfo(`Export stream started: Preparing, auditing and packing secure standard formatted ${format.toUpperCase()} document. Please wait...`);
       // Traditional secure immediate stream triggers
       window.location.href = `/api/verification/export?id=${id}&format=${format}`;
       
@@ -798,12 +1226,27 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
       if (outlineRes.ok) {
         const outlineData = await outlineRes.json();
+        const customOutline = (outlineData.outline || []).map((chap: any, idx: number) => {
+          let customWordLimit = chap.estimatedWords;
+          if (useCustomChapterLimits) {
+            if (idx === 0) customWordLimit = chap1Limit;
+            else if (idx === 1) customWordLimit = chap2Limit;
+            else if (idx === 2) customWordLimit = chap3Limit;
+            else if (idx === 3) customWordLimit = chap4Limit;
+            else if (idx === 4) customWordLimit = chap5Limit;
+          }
+          return {
+            ...chap,
+            estimatedWords: customWordLimit
+          };
+        });
+
         // Update database project outline reference
         const updatedRes = await fetch(`/api/projects/${createdProject.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            outline: outlineData.outline,
+            outline: customOutline,
           }),
         });
 
@@ -836,6 +1279,12 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
       setNewAssetFile(null);
       setNewBlueprintRealFile(null);
       setNewAssetRealFile(null);
+      setUseCustomChapterLimits(false);
+      setChap1Limit(2000);
+      setChap2Limit(3000);
+      setChap3Limit(2000);
+      setChap4Limit(2000);
+      setChap5Limit(1000);
     } catch (err: any) {
       showError(err.message);
     } finally {
@@ -1296,8 +1745,40 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     }
   };
 
+  // Quickly cycle through chapters using keyboard shortcuts (e.g. Ctrl/Alt + Arrow Keys)
+  const handleCycleChapter = async (direction: "prev" | "next") => {
+    const proj = selectedProjectRef.current;
+    if (!proj || !proj.outline) return;
+
+    // Fast-save any unsaved draft content before navigating chapters
+    if (editorSaveStatusRef.current === "dirty") {
+      showInfo("Auto-saving active chapter draft before switching...");
+      await handleSaveEditorRef.current(true);
+    }
+
+    const currentNum = parseInt(currentChapterKeyRef.current.replace("chapter", ""));
+    const totalChapters = proj.outline.length;
+    
+    let nextNum = currentNum;
+    if (direction === "next") {
+      nextNum = currentNum + 1 <= totalChapters ? currentNum + 1 : 1;
+    } else {
+      nextNum = currentNum - 1 >= 1 ? currentNum - 1 : totalChapters;
+    }
+
+    const nextChapKey = `chapter${nextNum}`;
+    
+    // Validate state and lock restrictions
+    if (isChapterLocked(nextChapKey)) {
+      showError(`Chapter Switcher Blocked: Chapter ${nextNum} is locked. Complete and approve previous milestones first.`);
+    } else {
+      setCurrentChapterKey(nextChapKey);
+      showSuccess(`Chapter switched: Chapter ${nextNum} - ${proj.outline[nextNum - 1]?.title || ""}`);
+    }
+  };
+
   // Manual Editor Saves changes
-  const handleSaveEditor = async () => {
+  const handleSaveEditor = async (isAuto?: boolean) => {
     if (!selectedProject || editorSaveStatus === "saving") return;
 
     setEditorSaveStatus("saving");
@@ -1334,7 +1815,10 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
         prev.map((p) => (p.id === selectedProject.id ? { ...p, chapters: updatedChapters, wordCount: totalWords } : p))
       );
       setEditorSaveStatus("saved");
-      setTimeout(() => setEditorSaveStatus("clean"), 2000);
+      if (isAuto) {
+        showSuccess("Changes Saved: Auto-save successfully persisted your draft to database.");
+      }
+      setTimeout(() => setEditorSaveStatus("clean"), 3000);
     } catch (err: any) {
       showError(err.message);
       setEditorSaveStatus("dirty");
@@ -1375,6 +1859,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
   // Academic format MS Word downloader: Times New Roman, Size 12pt, Double Spacing, 1-inch margins
   const downloadAcademicDoc = (title: string, content: string) => {
+    showInfo("Export stream started: Compiling manuscript lines and structuring double-spaced MS Word layout... Your document is preparing.");
     const lines = content.split("\n");
     let htmlContent = "";
     let inList = false;
@@ -1457,6 +1942,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
   // Academic format high-fidelity PDF downloader leveraging browser print-to-PDF styles
   const downloadAcademicPdf = (title: string, content: string) => {
+    showInfo("Export stream started: Rendering layout templates and generating high-fidelity academic PDF...");
     const lines = content.split("\n");
     let htmlContent = "";
     let inList = false;
@@ -1735,6 +2221,24 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
         {/* Global Control Stats / Switches / Profile Dropdown */}
         <div className="flex flex-wrap items-center justify-end gap-5 w-full xl:w-auto">
+          {/* AI Onboarding Chat Bot Entry Button */}
+          <button
+            onClick={() => {
+              setOnboardingMessages([]);
+              setIsOnboardingOpen(true);
+            }}
+            className={`px-3 py-1.5 font-mono text-[10.5px] font-bold uppercase tracking-wider rounded border transition-all duration-200 cursor-pointer flex items-center space-x-2 shadow-sm ${
+              isDarkMode 
+                ? "bg-indigo-950/70 hover:bg-indigo-900/70 border-indigo-500/30 text-indigo-300 hover:text-white hover:border-indigo-400" 
+                : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700 hover:text-indigo-800"
+            }`}
+            id="header-launch-onboarding-assistant"
+            title="Launch AXOM OS Onboarding AI Agent"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
+            <span>Onboarding AI Agent</span>
+          </button>
+
           {/* Light/Dark Switcher */}
           <button
             onClick={toggleTheme}
@@ -2251,72 +2755,142 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                     </div>
 
                     {isAddingRef && (
-                      <form onSubmit={handleAddReference} className="space-y-2.5 bg-zinc-950/60 p-3 border border-zinc-850">
-                        <div>
-                          <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Authors</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Sweller, J."
-                            value={refAuthors}
-                            onChange={(e) => setRefAuthors(e.target.value)}
-                            required
-                            className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="col-span-1">
-                            <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Year</label>
-                            <input
-                              type="text"
-                              placeholder="e.g. 1988"
-                              value={refYear}
-                              onChange={(e) => setRefYear(e.target.value)}
-                              className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
-                            />
+                      <div className="space-y-3 bg-zinc-950/60 p-3 border border-zinc-850">
+                        {/* Selector tabs for Manual vs BibTeX */}
+                        <div className="flex border-b border-zinc-850 pb-2 mb-2 justify-between items-center gap-2">
+                          <div className="flex space-x-1 p-0.5 bg-zinc-900 border border-zinc-800 rounded">
+                            <button
+                              type="button"
+                              onClick={() => setRefImportMode("manual")}
+                              className={`px-2 py-1 rounded text-[8.5px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
+                                refImportMode === "manual"
+                                  ? "bg-zinc-800 text-white font-extrabold"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              Single Source
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRefImportMode("bibtex")}
+                              className={`px-2 py-1 rounded text-[8.5px] font-mono font-bold tracking-tight uppercase transition cursor-pointer ${
+                                refImportMode === "bibtex"
+                                  ? "bg-zinc-800 text-white font-extrabold"
+                                  : "text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              Bulk BibTeX (.bib)
+                            </button>
                           </div>
-                          <div className="col-span-2">
-                            <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Override Citation Key (Opt)</label>
-                            <input
-                              type="text"
-                              placeholder={`e.g. [${(selectedProject?.references?.length || 0) + 1}] or key`}
-                              value={refCustomKey}
-                              onChange={(e) => setRefCustomKey(e.target.value)}
-                              className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
-                            />
+                          
+                          <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest hidden xs:inline">
+                            {refImportMode === "manual" ? "Manual formulation" : "BibTeX Loader"}
+                          </span>
+                        </div>
+
+                        {refImportMode === "manual" ? (
+                          <form onSubmit={handleAddReference} className="space-y-2.5">
+                            <div>
+                              <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Authors</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Sweller, J."
+                                value={refAuthors}
+                                onChange={(e) => setRefAuthors(e.target.value)}
+                                required
+                                className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className="col-span-1">
+                                <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Year</label>
+                                <input
+                                  type="text"
+                                  placeholder="e.g. 1988"
+                                  value={refYear}
+                                  onChange={(e) => setRefYear(e.target.value)}
+                                  className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                                />
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Override Citation Key (Opt)</label>
+                                <input
+                                  type="text"
+                                  placeholder={`e.g. [${(selectedProject?.references?.length || 0) + 1}] or key`}
+                                  value={refCustomKey}
+                                  onChange={(e) => setRefCustomKey(e.target.value)}
+                                  className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Title</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Cognitive load during problem solving..."
+                                value={refTitle}
+                                onChange={(e) => setRefTitle(e.target.value)}
+                                required
+                                className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Journal, Publisher or DOI</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. Cognitive Science, 12(2), 257-285"
+                                value={refJournal}
+                                onChange={(e) => setRefJournal(e.target.value)}
+                                className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
+                              />
+                            </div>
+
+                            <button
+                              type="submit"
+                              className="w-full py-2 bg-zinc-100 hover:bg-zinc-200 text-black text-[9.5px] uppercase font-mono font-bold tracking-wider transition-colors cursor-pointer"
+                            >
+                              Register Reference Entry
+                            </button>
+                          </form>
+                        ) : (
+                          <div className="space-y-3.5 pt-1 text-left">
+                            <div className="p-3 bg-zinc-900 border border-zinc-850 rounded-sm">
+                              <p className="text-[9.5px] text-zinc-400 font-sans leading-relaxed">
+                                Upload a standard <code className="text-zinc-200 font-mono font-bold">.bib</code> BibTeX file to parse and register multiple citations into this project vault instantaneously.
+                              </p>
+                            </div>
+                            
+                            <div className="border border-dashed border-zinc-800 hover:border-zinc-650 bg-[#0C0C0E]/50 hover:bg-zinc-900/60 p-5 rounded text-center transition cursor-pointer relative">
+                              <input
+                                type="file"
+                                accept=".bib"
+                                onChange={handleBibtexImport}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              />
+                              <div className="space-y-2 flex flex-col items-center">
+                                <span className="text-[10.5px] text-indigo-400 font-mono font-bold underline">Choose .bib File</span>
+                                <span className="text-[8.5px] text-zinc-500 font-mono">Drag & Drop or click to select file</span>
+                              </div>
+                            </div>
+                            
+                            {/* Standard Example Dropdown */}
+                            <details className="text-[8.5px] text-zinc-500 font-mono cursor-pointer bg-zinc-900/40 border border-zinc-850/50 p-2 rounded">
+                              <summary className="hover:text-zinc-300 font-bold uppercase select-none">View Standard BibTeX Template Example</summary>
+                              <pre className="mt-2 text-[7.5px] text-zinc-400 overflow-x-auto p-1.5 leading-tight bg-zinc-950 border border-zinc-900">
+{`@article{Sweller1988,
+  author = {Sweller, John},
+  title = {Cognitive load during problem solving},
+  journal = {Cognitive Science},
+  year = {1988}
+}`}
+                              </pre>
+                            </details>
                           </div>
-                        </div>
-
-                        <div>
-                          <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Title</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Cognitive load during problem solving..."
-                            value={refTitle}
-                            onChange={(e) => setRefTitle(e.target.value)}
-                            required
-                            className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="text-[8px] uppercase tracking-wide text-zinc-500 font-mono block mb-1">Journal, Publisher or DOI</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Cognitive Science, 12(2), 257-285"
-                            value={refJournal}
-                            onChange={(e) => setRefJournal(e.target.value)}
-                            className="w-full bg-[#0D0D0E] border border-zinc-800 text-[10px] p-1.5 focus:outline-none focus:border-zinc-500 text-zinc-100 font-mono"
-                          />
-                        </div>
-
-                        <button
-                          type="submit"
-                          className="w-full py-2 bg-zinc-100 hover:bg-zinc-200 text-black text-[9.5px] uppercase font-mono font-bold tracking-wider transition-colors cursor-pointer"
-                        >
-                          Register Reference Entry
-                        </button>
-                      </form>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -2408,17 +2982,72 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                   </div>
                 </div>
               ) : (
-                <div className="py-16 text-center border border-zinc-800 bg-[#09090B]">
-                  <Layers className="w-8 h-8 text-zinc-650 mx-auto mb-4" />
-                  <h3 className="text-base font-light tracking-wide text-zinc-350">Workspace compilation framework offline</h3>
-                  <p className="text-xs text-zinc-500 mt-1 max-w-sm mx-auto leading-relaxed">
-                    Select a research template project from the explorer column to boot active engine buffer.
-                  </p>
+                <div className="py-20 text-center border border-zinc-800 bg-[#09090B] relative overflow-hidden flex flex-col items-center justify-center p-8 rounded-sm">
+                  <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f2937_1px,transparent_1px),linear-gradient(to_bottom,#1f2937_1px,transparent_1px)] bg-[size:16px_16px] opacity-[0.02]" />
+                  <Layers className="w-10 h-10 text-zinc-700 mx-auto mb-4" />
+                  <div className="space-y-1 relative z-10 max-w-md">
+                    <h3 className="text-base font-medium tracking-wide text-zinc-300">Workspace empty / compilation framework offline</h3>
+                    <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                      Select an existing research draft from the sidebar column to boot the active processing engine, or use our specialized onboarding gateway to automatically build a compliant workspace.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-3 w-full max-w-md pt-6 relative z-10">
+                    <button
+                      onClick={() => {
+                        // Launch chatbot!
+                        setOnboardingMessages([]);
+                        setIsOnboardingOpen(true);
+                      }}
+                      className="w-full sm:w-auto px-6 py-2.5 bg-indigo-650 hover:bg-indigo-600 active:bg-indigo-700 text-white font-mono text-[11px] font-bold uppercase tracking-widest rounded transition duration-150 flex items-center justify-center space-x-2 cursor-pointer shadow-md"
+                      type="button"
+                    >
+                      <Sparkles className="w-4 h-4 text-white animate-pulse" />
+                      <span>Launch Onboarding</span>
+                    </button>
+                    <span className="text-[10px] font-mono text-zinc-500 uppercase">or</span>
+                    <button
+                      onClick={() => {
+                        setWizardStep(1);
+                        setNewProjModal(true);
+                      }}
+                      className="w-full sm:w-auto px-6 py-2.5 bg-[#121214] hover:bg-[#18181b] text-zinc-300 font-mono text-[11px] font-bold uppercase tracking-widest rounded border border-zinc-800 transition duration-150 flex items-center justify-center space-x-2 cursor-pointer"
+                      type="button"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Manual Builder</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
               {selectedProject && (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" id="split-screen-dashboard-container">
+                <>
+                  {/* Quantitative Research & Data Tables Manager Toolbar */}
+                  <div className="bg-zinc-900/40 border border-zinc-850 p-4 rounded-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4" id="data-tables-toolbar">
+                    <div className="flex items-start space-x-3">
+                      <div className="w-10 h-10 rounded bg-emerald-500/10 flex items-center justify-center border border-emerald-500/25 shrink-0 mt-0.5">
+                        <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-white tracking-wide">Chapter 4 Quantitative Research Data Tables</h3>
+                        <p className="text-xs text-zinc-400 mt-0.5 max-w-2xl leading-relaxed">
+                          Sync structured CSV tables with AXOM's validation engine. Create demographic panels, regression statistics arrays, or correlation models mapped to your methodology targets.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      <button
+                        onClick={() => setIsDataTableModalOpen(true)}
+                        className="w-full md:w-auto px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 font-mono text-xs font-semibold uppercase tracking-wider rounded border border-zinc-750 transition duration-150 cursor-pointer flex items-center justify-center space-x-2"
+                        type="button"
+                      >
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-450" />
+                        <span>Manage Research Tables ({selectedProject.dataTables?.length || 0})</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" id="split-screen-dashboard-container">
                   
                   {/* LEFT PANEL: Sidebar Workspace (Column span 4 on desktop, stack on mobile) */}
                   <aside className="lg:col-span-4 flex flex-col space-y-5" id="left-sidebar-workspace">
@@ -2999,8 +3628,23 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                   </div>
                                 </div>
 
-                                {/* Quick action widgets requested by user: Re-Humanize, Validate Sentence Tone, View Data Analytics */}
+                                {/* Quick action widgets requested by user: Re-Humanize, Validate Sentence Tone, View Data Analytics, Quick Export PDF */}
                                 <div className="flex flex-wrap items-center gap-1.5 font-mono text-[9px]">
+                                  <button
+                                    onClick={() => {
+                                      const title = activeOutline?.title || "Chapter Draft";
+                                      downloadAcademicPdf(title, editorContent);
+                                    }}
+                                    className={`px-2.5 py-1.5 border border-red-500/35 hover:border-red-500/60 transition flex items-center space-x-1.5 rounded-sm cursor-pointer ${
+                                      isDarkMode ? "bg-red-950/20 text-red-100 hover:bg-red-950/40" : "bg-red-50 text-red-700 hover:bg-red-100"
+                                    }`}
+                                    title="Quick Export this chapter as a high-fidelity academic PDF"
+                                    id="quick-export-pdf-header-btn"
+                                  >
+                                    <FileText className="w-3 h-3 text-red-400" />
+                                    <span className="font-extrabold uppercase text-[8.5px] tracking-wider">Quick Export PDF</span>
+                                  </button>
+
                                   <button
                                     onClick={() => {
                                       showInfo("Analyzing sentence rhythm, syntactic patterns, and active vs passive tone metrics...");
@@ -3282,8 +3926,8 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                               )}
 
                               {/* Toggle Switch for Standard Edit Mode vs Advisor Margin Comments */}
-                              <div className="flex items-center justify-between border-b border-zinc-900 pb-3 mb-4 gap-2 mt-4" id="editor-collaboration-toggle-container">
-                                <div className="flex items-center space-x-1 p-0.5 bg-zinc-950 border border-zinc-800 rounded-sm">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-900 pb-3 mb-4 gap-3 mt-4" id="editor-collaboration-toggle-container">
+                                <div className="flex items-center space-x-1 p-0.5 bg-zinc-950 border border-zinc-800 rounded-sm shrink-0">
                                   <button
                                     onClick={() => setEditorViewMode("standard")}
                                     className={`px-3 py-1.5 rounded-sm text-[10px] font-mono font-bold tracking-tight uppercase transition flex items-center space-x-2 cursor-pointer ${
@@ -3307,8 +3951,41 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                     <span>💬 Advisor Margin Notes ({activeChapter.comments?.length || 0})</span>
                                   </button>
                                 </div>
-                                <div className="text-[9.5px] font-mono text-zinc-500 uppercase tracking-widest hidden sm:block">
-                                  Manuscript Peer Review Matrix Active
+                                
+                                {/* Dynamic Font Size Control Widget */}
+                                <div className="flex items-center space-x-2 bg-zinc-950 px-2 py-1 rounded border border-zinc-900 justify-between sm:justify-start w-full sm:w-auto" id="editor-font-size-adjuster">
+                                  <span className="text-[8.5px] font-mono text-zinc-500 uppercase tracking-wider">Font size:</span>
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-[10px] font-mono text-zinc-100 font-bold bg-zinc-900 border border-zinc-850 px-2 py-0.5 rounded shrink-0">
+                                      {manuscriptFontSize}pt
+                                    </span>
+                                    <div className="flex items-center space-x-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setManuscriptFontSize(prev => Math.max(9, prev - 1))}
+                                        title="Decrease font size"
+                                        className="w-5 h-5 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 font-bold rounded text-xs transition cursor-pointer"
+                                      >
+                                        -
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setManuscriptFontSize(prev => Math.min(24, prev + 1))}
+                                        title="Increase font size"
+                                        className="w-5 h-5 flex items-center justify-center bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-zinc-300 font-bold rounded text-xs transition cursor-pointer"
+                                      >
+                                        +
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setManuscriptFontSize(12)}
+                                        title="Reset to 12pt standard"
+                                        className="px-1.5 py-0.5 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-[8.5px] text-zinc-400 font-mono rounded transition cursor-pointer"
+                                      >
+                                        Reset
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
 
@@ -3318,12 +3995,86 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                     ? "border-zinc-850 bg-[#09090C] focus-within:border-cyan-500/40" 
                                     : "border-zinc-250 bg-zinc-50 focus-within:border-blue-600/40 shadow-md"
                                 }`}>
+                                  {/* Floating Scholar Auto-Citation Helper Overlay */}
+                                  {showCitationSuggestions && (
+                                    <div className="absolute top-2.5 left-2.5 right-2.5 z-30 bg-zinc-950/95 border border-indigo-500/50 rounded-sm p-3 shadow-2xl font-mono text-xs max-h-56 overflow-y-auto animate-in fade-in duration-200" id="citation-autocomplete-box">
+                                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-2">
+                                        <div className="flex items-center space-x-1.5 text-indigo-400">
+                                          <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                                          <span className="text-[9.5px] uppercase tracking-wider font-extrabold font-mono">Scholarly References Suggester</span>
+                                        </div>
+                                        <button 
+                                          type="button" 
+                                          onClick={() => setShowCitationSuggestions(false)}
+                                          className="text-[9px] text-zinc-500 hover:text-zinc-300 font-bold underline cursor-pointer"
+                                        >
+                                          Close Suggestions
+                                        </button>
+                                      </div>
+                                      
+                                      {(() => {
+                                        const refs = selectedProject?.references || [];
+                                        const filteredRefs = refs.filter(r => 
+                                          r.citationKey.toLowerCase().includes(citationSearchQuery) ||
+                                          r.authors.toLowerCase().includes(citationSearchQuery) ||
+                                          r.title.toLowerCase().includes(citationSearchQuery)
+                                        );
+
+                                        if (filteredRefs.length === 0) {
+                                          return (
+                                            <p className="text-[10px] text-zinc-500 py-1.5 px-0.5">
+                                              No matching reference in library for query: <span className="text-zinc-300 font-bold">"{citationSearchQuery}"</span>. Type more or close.
+                                            </p>
+                                          );
+                                        }
+
+                                        return (
+                                          <div className="space-y-1.5">
+                                            <p className="text-[8px] text-zinc-450 uppercase mb-1">Select a reference key from your library to auto-complete:</p>
+                                            <div className="grid grid-cols-1 gap-1">
+                                              {filteredRefs.map(ref => (
+                                                <button
+                                                  key={ref.id}
+                                                  type="button"
+                                                  onClick={() => injectAutoCitation(ref.citationKey)}
+                                                  className="w-full text-left p-1.5 bg-zinc-900/60 hover:bg-indigo-950/40 border border-zinc-805 hover:border-indigo-800/40 rounded transition-all duration-200 text-zinc-300 hover:text-white flex items-center justify-between text-[10px] cursor-pointer"
+                                                >
+                                                  <div className="flex items-center space-x-2 truncate mr-3">
+                                                    <span className="bg-indigo-950/70 border border-indigo-900/50 text-indigo-300 px-1.5 py-0.5 rounded font-extrabold text-[9px] shrink-0">
+                                                      {ref.citationKey}
+                                                    </span>
+                                                    <span className="truncate text-zinc-400 font-sans">{ref.authors} ({ref.year}) - "{ref.title}"</span>
+                                                  </div>
+                                                  <span className="text-[8.5px] font-mono text-indigo-400 font-bold tracking-tight uppercase shrink-0">Inject (Click)</span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        );
+                                      })()}
+                                    </div>
+                                  )}
+
                                   <textarea
                                     ref={editorRef}
                                     value={editorContent}
                                     onChange={(e) => {
-                                      setEditorContent(e.target.value);
+                                      const val = e.target.value;
+                                      setEditorContent(val);
                                       setEditorSaveStatus("dirty");
+
+                                      // Check if typing a citation trigger
+                                      const selectionStart = e.target.selectionStart || 0;
+                                      const beforeCursor = val.substring(0, selectionStart);
+                                      const lastOpenBracketIdx = beforeCursor.lastIndexOf("[");
+                                      
+                                      if (lastOpenBracketIdx !== -1 && lastOpenBracketIdx >= beforeCursor.lastIndexOf("]")) {
+                                        const query = beforeCursor.substring(lastOpenBracketIdx + 1).toLowerCase();
+                                        setCitationSearchQuery(query);
+                                        setShowCitationSuggestions(true);
+                                      } else {
+                                        setShowCitationSuggestions(false);
+                                      }
                                     }}
                                     className={`w-full min-h-[480px] lg:min-h-[580px] focus:outline-none resize-y focus:ring-0 overflow-y-auto ${
                                       isDarkMode 
@@ -3334,7 +4085,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                     style={{
                                       lineHeight: "2.0",
                                       fontFamily: '"Times New Roman", Times, Georgia, serif',
-                                      fontSize: "12pt",
+                                      fontSize: `${manuscriptFontSize}pt`,
                                       padding: "1in"
                                     }}
                                   />
@@ -3397,7 +4148,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                                 </div>
 
                                                 {/* Text block */}
-                                                <p className="font-serif text-[13px] leading-relaxed select-none text-zinc-105">
+                                                <p className="font-serif leading-relaxed select-none text-zinc-105" style={{ fontSize: `${manuscriptFontSize}pt` }}>
                                                   {pText}
                                                 </p>
                                                 
@@ -3861,8 +4612,20 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
                               {/* Manual preservation actions */}
                               <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
-                                <span className="text-[10px] text-zinc-500 font-mono leading-none">
-                                  Preserves automatic revisions. Auto-save triggers after 5 seconds of inactivity.
+                                <span className="text-[10px] text-zinc-500 font-mono leading-none flex flex-wrap items-center gap-2">
+                                  <span>Preserves automatic revisions. Auto-save triggers after 5 seconds of inactivity.</span>
+                                  {editorSaveStatus === "saved" && (
+                                    <span className="text-emerald-400 font-bold flex items-center gap-1 bg-emerald-950/20 px-1.5 py-0.5 border border-emerald-900/35 rounded-sm animate-[pulse_2s_infinite]" id="auto-save-done-status-badge">
+                                      <Check className="w-3 h-3" />
+                                      Changes Saved Automatically
+                                    </span>
+                                  )}
+                                  {editorSaveStatus === "saving" && (
+                                    <span className="text-amber-400 font-medium flex items-center gap-1 bg-amber-950/20 px-1.5 py-0.5 border border-amber-900/35 rounded-sm animate-pulse" id="auto-save-progress-status-badge">
+                                      <RefreshCw className="w-3 h-3 animate-spin" />
+                                      Syncing Draft...
+                                    </span>
+                                  )}
                                 </span>
                                 <button
                                   onClick={handleSaveEditor}
@@ -3889,7 +4652,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                   </div>
 
                 </div>
-              )}
+              </>)}
             </div>
           )}
 
@@ -4916,7 +5679,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-[#0D0D0E] border border-zinc-800 shadow-2xl p-6 max-w-xl w-full flex flex-col space-y-6 text-zinc-100"
+              className="bg-[#0D0D0E] border border-zinc-800 shadow-2xl p-6 max-w-xl w-full flex flex-col space-y-6 text-zinc-100 max-h-[92vh] overflow-y-auto"
             >
               {/* Modal header */}
               <div className="flex items-center justify-between border-b border-zinc-805 pb-4">
@@ -5128,19 +5891,113 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                       <p className="text-[9px] text-zinc-550 font-mono">Define reference style preferences (footnoting, notation, numbering, etc.)</p>
                     </div>
 
-                    <div className="flex flex-col space-y-1.5">
+                    <div className="flex flex-col space-y-1.5 animate-in fade-in duration-300">
                       <label className="text-[9px] uppercase font-mono font-bold text-zinc-500 tracking-wider">
                         Target Word Limit
                       </label>
                       <input
                         type="number"
                         required
+                        disabled={useCustomChapterLimits}
                         value={newLimit}
                         onChange={(e) => setNewLimit(Number(e.target.value))}
-                        className="p-3 bg-zinc-950 border border-zinc-800 focus:outline-none focus:border-zinc-500 text-xs text-zinc-100 font-mono text-left rounded-sm"
+                        className={`p-3 bg-zinc-950 border border-zinc-800 focus:outline-none focus:border-zinc-500 text-xs text-zinc-105 font-mono text-left rounded-sm ${
+                          useCustomChapterLimits ? "opacity-55 cursor-not-allowed text-zinc-400" : "text-zinc-100"
+                        }`}
                         id="wizard-input-wordlimit"
                       />
-                      <p className="text-[9px] text-zinc-550 font-mono">Sized to maintain strict architectural outline depth bounds.</p>
+                      <p className="text-[9px] text-zinc-550 font-mono">
+                        {useCustomChapterLimits 
+                          ? "Chapter Word Limits override is active. Edit chapter limits below to change total limit." 
+                          : "Sized to maintain strict architectural outline depth bounds."}
+                      </p>
+
+                      {/* Chapter-Specific Word Count Customization */}
+                      <div className="border border-zinc-900 bg-zinc-950/45 rounded p-3.5 space-y-3 mt-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="checkbox"
+                              id="use-custom-chapter-limits-checkbox"
+                              checked={useCustomChapterLimits}
+                              onChange={(e) => setUseCustomChapterLimits(e.target.checked)}
+                              className="w-3.5 h-3.5 rounded border-zinc-800 bg-zinc-950 text-indigo-600 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                            />
+                            <label htmlFor="use-custom-chapter-limits-checkbox" className="text-[10px] uppercase font-mono font-bold text-zinc-300 tracking-wide cursor-pointer select-none">
+                              Configure Chapter-Specific Word Count Goals
+                            </label>
+                          </div>
+                          <span className="text-[8.5px] font-mono text-indigo-400 font-bold uppercase tracking-widest">
+                            {useCustomChapterLimits ? "Custom Chapters" : "Auto-Balanced"}
+                          </span>
+                        </div>
+
+                        {useCustomChapterLimits ? (
+                          <div className="space-y-2.5 pt-1.5 border-t border-zinc-900/60 animate-fade-in" id="custom-chapter-limits-container">
+                            <p className="text-[9.5px] text-zinc-400 font-sans leading-relaxed">
+                              Specify targeted word limits for each chapter. The sum of these chapters will automatically form the total portfolio limit.
+                            </p>
+                            <div className="grid grid-cols-5 gap-2 font-mono text-[9px]">
+                              <div className="flex flex-col space-y-1 text-center">
+                                <span className="text-zinc-500">Ch 1 (Intro)</span>
+                                <input
+                                  type="number"
+                                  value={chap1Limit}
+                                  onChange={(e) => setChap1Limit(Math.max(100, Number(e.target.value)))}
+                                  className="w-full bg-[#040405] border border-zinc-800 p-1.5 focus:outline-none focus:border-indigo-505 text-center text-zinc-100 rounded text-[10px]"
+                                />
+                              </div>
+                              <div className="flex flex-col space-y-1 text-center">
+                                <span className="text-zinc-500">Ch 2 (Lit Rev)</span>
+                                <input
+                                  type="number"
+                                  value={chap2Limit}
+                                  onChange={(e) => setChap2Limit(Math.max(100, Number(e.target.value)))}
+                                  className="w-full bg-[#040405] border border-zinc-800 p-1.5 focus:outline-none focus:border-indigo-505 text-center text-zinc-100 rounded text-[10px]"
+                                />
+                              </div>
+                              <div className="flex flex-col space-y-1 text-center">
+                                <span className="text-zinc-500">Ch 3 (Method)</span>
+                                <input
+                                  type="number"
+                                  value={chap3Limit}
+                                  onChange={(e) => setChap3Limit(Math.max(100, Number(e.target.value)))}
+                                  className="w-full bg-[#040405] border border-zinc-805 p-1.5 focus:outline-none focus:border-indigo-505 text-center text-zinc-100 rounded text-[10px]"
+                                />
+                              </div>
+                              <div className="flex flex-col space-y-1 text-center">
+                                <span className="text-zinc-500">Ch 4 (Analysis)</span>
+                                <input
+                                  type="number"
+                                  value={chap4Limit}
+                                  onChange={(e) => setChap4Limit(Math.max(100, Number(e.target.value)))}
+                                  className="w-full bg-[#040405] border border-zinc-805 p-1.5 focus:outline-none focus:border-indigo-505 text-center text-zinc-100 rounded text-[10px]"
+                                />
+                              </div>
+                              <div className="flex flex-col space-y-1 text-center">
+                                <span className="text-zinc-500">Ch 5 (Concl)</span>
+                                <input
+                                  type="number"
+                                  value={chap5Limit}
+                                  onChange={(e) => setChap5Limit(Math.max(100, Number(e.target.value)))}
+                                  className="w-full bg-[#040405] border border-zinc-805 p-1.5 focus:outline-none focus:border-indigo-505 text-center text-zinc-100 rounded text-[10px]"
+                                />
+                              </div>
+                            </div>
+                            
+                            <div className="pt-2 text-[9.5px] font-mono text-zinc-300 flex justify-between items-center bg-[#050507] p-2 rounded border border-zinc-900">
+                              <span>Computed Total Limit:</span>
+                              <strong className="text-indigo-400 text-[11px] text-right">
+                                {(chap1Limit + chap2Limit + chap3Limit + chap4Limit + chap5Limit).toLocaleString()} words
+                              </strong>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[9.5px] text-zinc-500 font-sans leading-relaxed pt-1 border-t border-zinc-900/40">
+                            Chapters will be auto-divided using standard structural fractions (20% Ch1, 30% Ch2, 20% Ch3, 20% Ch4, 10% Ch5) mapped across your <strong>{newLimit.toLocaleString()} words</strong> target limit.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -5416,6 +6273,145 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
         )}
       </AnimatePresence>
 
+      {/* Immersive Conversational Onboarding Chatbot Modal Overlay */}
+      <AnimatePresence>
+        {isOnboardingOpen && (
+          <div className="fixed inset-0 z-50 bg-[#09090B]/90 backdrop-blur-md flex items-center justify-center p-4" id="modal-onboarding-chatbot">
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="bg-[#0D0D0E] border border-zinc-805 shadow-3xl max-w-2xl w-full flex flex-col h-[82vh] max-h-[750px] text-zinc-100 rounded-md overflow-hidden"
+            >
+              {/* Modal Header */}
+              <div className="border-b border-zinc-805 p-4.5 flex items-center justify-between bg-zinc-950/45">
+                <div className="flex items-center space-x-3 text-left">
+                  <div className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-100 font-mono">
+                      AXOM OS Onboarding Assistant
+                    </h3>
+                    <p className="text-[10px] text-zinc-500 font-mono font-medium block">
+                      Expert Academic Dean • Real-Time Methodology Validation Gateway
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsOnboardingOpen(false)}
+                  className="text-zinc-500 hover:text-white font-mono text-sm leading-none bg-zinc-900/40 p-1.5 hover:bg-zinc-850 border border-zinc-800 rounded transition cursor-pointer"
+                  aria-label="Exit onboarding assistant"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Chat Message Panel */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-[#09090B]/30 flex flex-col justify-start">
+                {onboardingMessages.map((msg, index) => {
+                  const isModel = msg.role === "model";
+                  return (
+                    <div 
+                      key={index}
+                      className={`flex items-start md:space-x-3.5 space-x-2.5 max-w-[88%] lg:max-w-[82%] animate-[fadeIn_0.2s_ease-out] ${
+                        isModel ? "self-start text-left" : "self-end flex-row-reverse text-right"
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-sm flex items-center justify-center border font-mono font-bold text-xs shrink-0 ${
+                        isModel 
+                          ? "bg-indigo-950/30 text-indigo-400 border-indigo-900/30" 
+                          : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                      }`}>
+                        {isModel ? "D" : "U"}
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-mono uppercase tracking-widest text-[#a1a1aa] block font-semibold px-1">
+                          {isModel ? "Dean Jenkins" : "Researcher"}
+                        </span>
+                        <div className={`p-4 text-xs tracking-wide leading-relaxed rounded-md whitespace-pre-wrap ${
+                          isModel 
+                            ? "bg-[#0c0c0e] border border-zinc-850/70 text-zinc-200" 
+                            : "bg-indigo-650 text-white"
+                        }`}>
+                          {msg.text}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Loading Ticker */}
+                {isOnboardingSending && (
+                  <div className="flex items-start space-x-3.5 max-w-[80%] self-start text-left animate-pulse">
+                    <div className="w-8 h-8 rounded-sm bg-indigo-950/20 text-indigo-550 border border-indigo-900/20 flex items-center justify-center font-mono font-bold text-xs">
+                      D
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[9px] font-mono uppercase tracking-widest text-[#71717a] block font-semibold px-1">
+                        Assistant Lining Up variables...
+                      </span>
+                      <div className="p-4 bg-[#0A0A0B]/50 border border-zinc-900 text-zinc-500 rounded-md text-xs font-mono flex items-center space-x-2">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-zinc-600 mr-2 shrink-0" />
+                        <span>Evaluating structural alignment matrix...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Submitting baseline to core loader */}
+                {isOnboardingCreating && (
+                  <div className="p-4.5 bg-indigo-950/20 border border-indigo-500/20 text-indigo-300 rounded-sm font-mono text-[11px] space-y-2.5 animate-pulse my-2">
+                    <div className="flex items-center space-x-2">
+                      <Cpu className="w-4 h-4 text-indigo-400 animate-spin mr-1.5 shrink-0" />
+                      <span className="font-bold">TRANSMITTING JSON BASELINE OVERLAY TO AXOM OS ENGINE</span>
+                    </div>
+                    <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: '85%' }}></div>
+                    </div>
+                    <p className="text-[10px] text-indigo-350">
+                      Syncing study design, validating Cochran formulas, and generating compliant high-fidelity guidelines... Please stand by.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input Interface Form */}
+              <form 
+                onSubmit={handleSendOnboardingMessage}
+                className="p-4 border-t border-zinc-805 bg-zinc-950/45 flex items-center space-x-3"
+              >
+                <input
+                  type="text"
+                  value={onboardingInput}
+                  onChange={(e) => setOnboardingInput(e.target.value)}
+                  disabled={isOnboardingSending || isOnboardingCreating}
+                  placeholder={
+                    isOnboardingCreating 
+                      ? "Onboarding locked. Booting workspace..." 
+                      : isOnboardingSending 
+                        ? "Dean is thinking..." 
+                        : "Formulate your academic response to the Dean..."
+                  }
+                  className="flex-1 bg-zinc-900/95 border border-zinc-800 rounded px-4 py-2.5 text-xs text-white focus:outline-none focus:border-zinc-700 disabled:opacity-60 transition"
+                  id="onboarding-chat-input"
+                />
+                <button
+                  type="submit"
+                  disabled={!onboardingInput.trim() || isOnboardingSending || isOnboardingCreating}
+                  className="px-5 py-2.5 bg-indigo-650 hover:bg-indigo-600 disabled:bg-zinc-900 disabled:text-zinc-650 text-white font-mono text-[10px] font-bold uppercase tracking-widest rounded transition cursor-pointer shrink-0"
+                  id="onboarding-chat-submit"
+                >
+                  Reply
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Reject & Regenerate Detail Specification Modal Overlay */}
       {rejectModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-md" id="reject-specification-modal">
@@ -5531,6 +6527,47 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
           </div>
         </div>
       )}
+
+      {selectedProject && (
+        <DataTableModal
+          isOpen={isDataTableModalOpen}
+          onClose={() => setIsDataTableModalOpen(false)}
+          project={selectedProject}
+          onUpdateProject={(updatedPrj) => {
+            setProjects((prev) =>
+              prev.map((p) => (p.id === updatedPrj.id ? updatedPrj : p))
+            );
+          }}
+        />
+      )}
+
+      {/* Persistent Floating AI Onboarding Agent Bubble */}
+      <div className="fixed bottom-12 right-6 z-40 flex flex-col items-end space-y-2 font-mono">
+        {!isOnboardingOpen && (
+          <div className="flex items-center space-x-2 bg-zinc-950/95 border border-zinc-800/80 rounded-lg p-2.5 shadow-2xl animate-fade-in backdrop-blur-md">
+            <span className="relative flex h-2 w-2 ml-1">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-300 pr-1">Onboarding Agent Ready</span>
+          </div>
+        )}
+        <button
+          onClick={() => {
+            setOnboardingMessages([]);
+            setIsOnboardingOpen(true);
+          }}
+          className={`h-14 w-14 rounded-full flex items-center justify-center transition-all duration-300 border shadow-2xl cursor-pointer hover:scale-105 active:scale-95 group ${
+            isDarkMode 
+              ? "bg-[#09090B] border-indigo-500/40 hover:border-indigo-500 hover:shadow-[0_0_20px_rgba(99,102,241,0.25)] text-indigo-400 hover:text-white" 
+              : "bg-white border-indigo-200 hover:border-indigo-450 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)] text-indigo-600 hover:text-indigo-700 hover:bg-zinc-50"
+          }`}
+          title="Launch AXOM OS Onboarding Assistant"
+          id="floating-launch-onboarding-assistant"
+        >
+          <Sparkles className="w-6 h-6 animate-pulse group-hover:rotate-12 transition-transform duration-300 text-indigo-400" />
+        </button>
+      </div>
 
       {/* Elegant High-Contrast Status Footer Bar */}
       <footer className="bg-zinc-100 text-black h-8 px-6 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.18em] relative z-10 shrink-0">
