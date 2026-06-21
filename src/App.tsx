@@ -29,7 +29,9 @@ import {
   Check,
   Sun,
   Moon,
-  FileSpreadsheet
+  FileSpreadsheet,
+  X,
+  Printer
 } from "lucide-react";
 import { ResearchProject, ClusterMetrics, DataTable } from "./types";
 import DataTableModal from "./components/DataTableModal";
@@ -355,6 +357,17 @@ export default function App() {
 
   // Dynamic font size of manuscript viewer
   const [manuscriptFontSize, setManuscriptFontSize] = useState<number>(12);
+
+  // Print Preview Modal States
+  const [isPrintPreviewOpen, setIsPrintPreviewOpen] = useState(false);
+  const [printPreviewTitle, setPrintPreviewTitle] = useState("");
+  const [printPreviewContent, setPrintPreviewContent] = useState("");
+  const [printLineSpacing, setPrintLineSpacing] = useState<"1.0" | "1.5" | "2.0">("2.0");
+  const [printFontSize, setPrintFontSize] = useState<number>(12);
+  const [printShowPageNumbers, setPrintShowPageNumbers] = useState<boolean>(true);
+  const [printPageMargin, setPrintPageMargin] = useState<"0.5" | "1.0" | "1.25">("1.0");
+  const [printFontFamily, setPrintFontFamily] = useState<"Times New Roman" | "Arial" | "Courier New">("Times New Roman");
+  const [printShowHeaderFooter, setPrintShowHeaderFooter] = useState<boolean>(true);
 
   // Editor Ref for precise caret inserting
   const editorRef = React.useRef<HTMLTextAreaElement>(null);
@@ -1960,12 +1973,181 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     document.body.removeChild(element);
   };
 
+  // Helper to parse Markdown content and render layout element previews dynamically
+  const renderPreviewHtml = (content: string) => {
+    const lines = content.split("\n");
+    let htmlResult: React.ReactNode[] = [];
+    let inList = false;
+    let listItems: string[] = [];
+
+    const fontStyleClass = printFontFamily === "Times New Roman"
+      ? "font-serif"
+      : printFontFamily === "Arial"
+      ? "font-sans"
+      : "font-mono";
+
+    const spacingStyle = {
+      lineHeight: printLineSpacing
+    };
+
+    const sizeStyle = {
+      fontSize: `${printFontSize}pt`
+    };
+
+    const listSpacing = printLineSpacing === "2.0" ? "my-3" : "my-1.5";
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (!trimmed) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        continue;
+      }
+
+      if (trimmed.startsWith("# ")) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        htmlResult.push(
+          <h1 key={`h1-${i}`} className={`text-center font-bold uppercase ${fontStyleClass} mt-6 mb-4`} style={{ fontSize: `${printFontSize + 4}pt` }}>
+            {trimmed.replace("# ", "")}
+          </h1>
+        );
+      } else if (trimmed.startsWith("## ")) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        htmlResult.push(
+          <h2 key={`h2-${i}`} className={`font-bold ${fontStyleClass} mt-5 mb-3`} style={{ fontSize: `${printFontSize + 2}pt` }}>
+            {trimmed.replace("## ", "")}
+          </h2>
+        );
+      } else if (trimmed.startsWith("### ")) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        htmlResult.push(
+          <h3 key={`h3-${i}`} className={`font-bold ${fontStyleClass} mt-4 mb-2`} style={{ fontSize: `${printFontSize}pt` }}>
+            {trimmed.replace("### ", "")}
+          </h3>
+        );
+      } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+        inList = true;
+        listItems.push(trimmed.substring(2));
+      } else if (trimmed.match(/^\d+\.\s/)) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        htmlResult.push(
+          <ol key={`ol-${i}`} className={`list-decimal pl-8 ${fontStyleClass} my-3`} style={{ ...spacingStyle, ...sizeStyle }}>
+            <li className="mb-1">{trimmed.replace(/^\d+\.\s/, "")}</li>
+          </ol>
+        );
+      } else if (trimmed.startsWith("|")) {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        const cols = trimmed.split("|").map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+        htmlResult.push(
+          <div key={`table-${i}`} className="my-4 overflow-x-auto">
+            <table className={`w-full border-collapse border border-zinc-300 text-left ${fontStyleClass}`} style={{ ...sizeStyle }}>
+              <thead>
+                <tr className="bg-zinc-100/50">
+                  {cols.map((col, idx) => (
+                    <th key={idx} className="border border-zinc-300 p-2 font-semibold">
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            </table>
+          </div>
+        );
+      } else {
+        if (inList) {
+          htmlResult.push(
+            <ul key={`list-${i}`} className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+              {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+        // approximate indent class in print preview
+        const inlineIndent = printLineSpacing === "2.0" ? "2em" : "1em";
+        htmlResult.push(
+          <p
+            key={`p-${i}`}
+            className={`text-justify mb-4 ${fontStyleClass}`}
+            style={{ ...spacingStyle, ...sizeStyle, textIndent: inlineIndent }}
+          >
+            {trimmed}
+          </p>
+        );
+      }
+    }
+
+    if (inList && listItems.length > 0) {
+      htmlResult.push(
+        <ul key="list-final" className={`list-disc pl-8 ${fontStyleClass} ${listSpacing}`} style={{ ...spacingStyle, ...sizeStyle }}>
+          {listItems.map((item, idx) => <li key={idx} className="mb-1">{item}</li>)}
+        </ul>
+      );
+    }
+
+    return htmlResult;
+  };
+
   // Academic format high-fidelity PDF downloader leveraging browser print-to-PDF styles
   const downloadAcademicPdf = (title: string, content: string) => {
     showInfo("Export stream started: Rendering layout templates and generating high-fidelity academic PDF...");
     const lines = content.split("\n");
     let htmlContent = "";
     let inList = false;
+
+    const fontStyle = printFontFamily === "Times New Roman" 
+      ? "'Times New Roman', Times, serif" 
+      : printFontFamily === "Arial" 
+      ? "Arial, sans-serif" 
+      : "'Courier New', monospace";
 
     lines.forEach(line => {
       const trimmed = line.trim();
@@ -1978,25 +2160,25 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
       }
 
       if (trimmed.startsWith("# ")) {
-        htmlContent += `<h1 style="font-size: 16pt; text-align: center; margin-top: 24pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif; text-transform: uppercase;">${trimmed.replace("# ", "")}</h1>\n`;
+        htmlContent += `<h1 style="font-size: ${printFontSize + 4}pt; text-align: center; margin-top: 24pt; margin-bottom: 12pt; font-family: ${fontStyle}; text-transform: uppercase;">${trimmed.replace("# ", "")}</h1>\n`;
       } else if (trimmed.startsWith("## ")) {
-        htmlContent += `<h2 style="font-size: 14pt; margin-top: 18pt; margin-bottom: 12pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("## ", "")}</h2>\n`;
+        htmlContent += `<h2 style="font-size: ${printFontSize + 2}pt; margin-top: 18pt; margin-bottom: 12pt; font-family: ${fontStyle};">${trimmed.replace("## ", "")}</h2>\n`;
       } else if (trimmed.startsWith("### ")) {
-        htmlContent += `<h3 style="font-size: 12pt; margin-top: 12pt; margin-bottom: 6pt; font-family: 'Times New Roman', Times, serif;">${trimmed.replace("### ", "")}</h3>\n`;
+        htmlContent += `<h3 style="font-size: ${printFontSize}pt; margin-top: 12pt; margin-bottom: 6pt; font-family: ${fontStyle};">${trimmed.replace("### ", "")}</h3>\n`;
       } else if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
         if (!inList) {
-          htmlContent += `<ul style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          htmlContent += `<ul style="margin-left: 0.5in; font-family: ${fontStyle};">\n`;
           inList = true;
         }
-        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.substring(2)}</li>\n`;
+        htmlContent += `<li style="font-size: ${printFontSize}pt; line-height: ${printLineSpacing}; margin-bottom: 6pt;">${trimmed.substring(2)}</li>\n`;
       } else if (trimmed.match(/^\d+\.\s/)) {
         if (!inList) {
-          htmlContent += `<ol style="margin-left: 0.5in; font-family: 'Times New Roman', Times, serif;">\n`;
+          htmlContent += `<ol style="margin-left: 0.5in; font-family: ${fontStyle};">\n`;
           inList = true;
         }
-        htmlContent += `<li style="font-size: 12pt; line-height: 2.0; margin-bottom: 6pt;">${trimmed.replace(/^\d+\.\s/, "")}</li>\n`;
+        htmlContent += `<li style="font-size: ${printFontSize}pt; line-height: ${printLineSpacing}; margin-bottom: 6pt;">${trimmed.replace(/^\d+\.\s/, "")}</li>\n`;
       } else if (trimmed.startsWith("|")) {
-        htmlContent += `<div style="margin: 12pt 0; text-align: center; font-family: 'Times New Roman', Times, serif;"><table border="1" cellspacing="0" cellpadding="6" style="margin: 0 auto; border-collapse: collapse; font-size: 11pt; line-height: 1.5; width: 100%;">`;
+        htmlContent += `<div style="margin: 12pt 0; text-align: center; font-family: ${fontStyle};"><table border="1" cellspacing="0" cellpadding="6" style="margin: 0 auto; border-collapse: collapse; font-size: ${printFontSize - 1}pt; line-height: 1.5; width: 100%;">`;
         const rows = line.split("|").map(cell => cell.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
         htmlContent += `<tr>` + rows.map(r => `<th style="border: 1px solid #777; background-color: #f2f2f2;">${r}</th>`).join("") + `</tr>`;
         htmlContent += `</table></div>`;
@@ -2005,9 +2187,13 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
           htmlContent += "</ul>\n";
           inList = false;
         }
-        htmlContent += `<p style="font-size: 12pt; line-height: 2.0; text-indent: 0.5in; margin-bottom: 12pt; text-align: justify; font-family: 'Times New Roman', Times, serif;">${trimmed}</p>\n`;
+        htmlContent += `<p style="font-size: ${printFontSize}pt; line-height: ${printLineSpacing}; text-indent: 0.5in; margin-bottom: 12pt; text-align: justify; font-family: ${fontStyle};">${trimmed}</p>\n`;
       }
     });
+
+    // Generate mock header/footer inside the printed document if toggled
+    const headerHtml = printShowHeaderFooter ? `<div style="display: flex; justify-content: space-between; font-size: 8.5pt; font-family: ${fontStyle}; border-bottom: 0.5px solid #bbb; padding-bottom: 4px; margin-bottom: 30px; text-transform: uppercase; color: #444; letter-spacing: 0.5px;"><span>AXOM OS Manuscript System</span><span>${title}</span></div>` : "";
+    const footerHtml = printShowHeaderFooter ? `<div style="position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-between; font-size: 8.5pt; font-family: ${fontStyle}; border-top: 0.5px solid #bbb; padding-top: 4px; text-transform: uppercase; color: #444; letter-spacing: 0.5px;"><span>Confidential Draft</span><span>${printShowPageNumbers ? "Page 1 of 1" : ""}</span></div>` : "";
 
     const fullHtml = `<!DOCTYPE html>
 <html>
@@ -2017,12 +2203,12 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 <style>
   @page {
     size: letter;
-    margin: 1in;
+    margin: ${printPageMargin}in;
   }
   body {
-    font-family: 'Times New Roman', Times, serif;
-    font-size: 12pt;
-    line-height: 2.0;
+    font-family: ${fontStyle};
+    font-size: ${printFontSize}pt;
+    line-height: ${printLineSpacing};
     margin: 0;
     padding: 0;
     color: #000;
@@ -2039,7 +2225,11 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 </style>
 </head>
 <body>
-  ${htmlContent}
+  ${headerHtml}
+  <div style="position: relative; z-index: 10; margin-bottom: 50px;">
+    ${htmlContent}
+  </div>
+  ${footerHtml}
 </body>
 </html>`;
 
@@ -3522,11 +3712,15 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                   Export Word (.doc)
                                 </button>
                                 <button
-                                  onClick={() => downloadAcademicPdf(activeOutline.title, editorContent)}
-                                  className="px-2 py-1 border border-red-950 bg-red-950/30 hover:bg-red-950/50 text-red-400 border-red-900/60 text-[10px] font-mono tracking-tight transition font-bold"
-                                  title="Download High-Fidelity PDF styled with Times New Roman, Double Spacing, 1in Margins"
+                                  onClick={() => {
+                                    setPrintPreviewTitle(activeOutline?.title || "Chapter Draft");
+                                    setPrintPreviewContent(editorContent);
+                                    setIsPrintPreviewOpen(true);
+                                  }}
+                                  className="px-2 py-1 border border-red-950 bg-red-950/30 hover:bg-red-950/50 text-red-400 border-red-900/60 text-[10px] font-mono tracking-tight transition font-bold cursor-pointer"
+                                  title="Open document-accurate Print Preview to customize & export your academic PDF"
                                 >
-                                  Export PDF (.pdf)
+                                  Print Preview & PDF
                                 </button>
                                 <button
                                   onClick={() => {
@@ -3653,7 +3847,9 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                   <button
                                     onClick={() => {
                                       const title = activeOutline?.title || "Chapter Draft";
-                                      downloadAcademicPdf(title, editorContent);
+                                      setPrintPreviewTitle(title);
+                                      setPrintPreviewContent(editorContent);
+                                      setIsPrintPreviewOpen(true);
                                     }}
                                     className={`px-2.5 py-1.5 border border-red-500/35 hover:border-red-500/60 transition flex items-center space-x-1.5 rounded-sm cursor-pointer ${
                                       isDarkMode ? "bg-red-950/20 text-red-100 hover:bg-red-950/40" : "bg-red-50 text-red-700 hover:bg-red-100"
@@ -6559,6 +6755,265 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
             );
           }}
         />
+      )}
+
+      {isPrintPreviewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-6 backdrop-blur-xl bg-black/85 animate-fade-in font-sans animate-duration-150" id="print-preview-modal-container">
+          <div className="flex flex-col md:flex-row w-full h-full md:max-w-7xl md:h-[90vh] bg-zinc-950 border border-zinc-800/80 rounded-none md:rounded-xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden">
+            
+            {/* Left Box: The virtual document canvas (Letter layout wrapper) */}
+            <div className="flex-1 flex flex-col bg-zinc-900 border-b md:border-b-0 md:border-r border-zinc-850/60 p-4 overflow-y-auto" id="document-canvas-container">
+              <div className="flex items-center justify-between mb-4 px-2">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2 h-2 bg-red-500 rounded-full animate-ping"></span>
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">Document Layout Calibration Preview (Letter Size)</span>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <span className="text-[10px] font-mono text-zinc-500">
+                    Est. Pages: {Math.max(1, Math.ceil(printPreviewContent.trim().split(/\s+/).filter(Boolean).length / (printLineSpacing === "2.0" ? 250 : printLineSpacing === "1.5" ? 375 : 500)))}
+                  </span>
+                  <span className="text-[10px] font-mono text-zinc-500">
+                    Words: {printPreviewContent.trim().split(/\s+/).filter(Boolean).length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Scrollable sheet container */}
+              <div className="flex-1 flex justify-center py-4 px-2 overflow-y-auto bg-zinc-900/60 rounded-lg border border-zinc-800/35">
+                {/* The visual paper sheet mimicking the finalized PDF */}
+                <div 
+                  id="visual-academic-sheet"
+                  className="w-full max-w-[816px] min-h-[1056px] bg-white text-black shadow-[0_10px_35px_rgba(0,0,0,0.5)] transition-all duration-300 relative flex flex-col"
+                  style={{
+                    padding: `${printPageMargin}in`,
+                    fontFamily: printFontFamily === "Times New Roman" ? "'Times New Roman', Times, serif" : printFontFamily === "Arial" ? "Arial, sans-serif" : "'Courier New', monospace"
+                  }}
+                >
+                  {/* Mock Running Header */}
+                  {printShowHeaderFooter && (
+                    <div 
+                      className="flex justify-between text-[8.5pt] text-zinc-500 border-b border-zinc-250 pb-1 mb-8 uppercase tracking-wide select-none outline-none font-bold"
+                      style={{
+                        fontFamily: printFontFamily === "Times New Roman" ? "'Times New Roman', Times, serif" : printFontFamily === "Arial" ? "Arial, sans-serif" : "'Courier New', monospace"
+                      }}
+                    >
+                      <span>AXOM OS MANUSCRIPT COMPLIANCE v2.4</span>
+                      <span>CHAPTER: {printPreviewTitle}</span>
+                    </div>
+                  )}
+
+                  {/* Document actual contents parsed to React vdom elements */}
+                  <div className="flex-1 relative">
+                    <div 
+                      className="text-justify whitespace-pre-wrap select-text"
+                      style={{
+                        fontSize: `${printFontSize}pt`,
+                        lineHeight: printLineSpacing,
+                      }}
+                    >
+                      {/* Subheadings list styling render block */}
+                      {renderPreviewHtml(printPreviewContent)}
+                    </div>
+                  </div>
+
+                  {/* Mock Running Footer */}
+                  {printShowHeaderFooter && (
+                    <div 
+                      className="mt-12 flex justify-between text-[8.5pt] text-zinc-500 border-t border-zinc-250 pt-1 uppercase tracking-wide select-none outline-none font-bold"
+                      style={{
+                        fontFamily: printFontFamily === "Times New Roman" ? "'Times New Roman', Times, serif" : printFontFamily === "Arial" ? "Arial, sans-serif" : "'Courier New', monospace"
+                      }}
+                    >
+                      <span>Confidential Manuscript Draft</span>
+                      <span>{printShowPageNumbers ? "Page 1 of 1" : ""}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Box: Layout & typography config panel */}
+            <div className="w-full md:w-80 flex flex-col bg-zinc-950 p-6 overflow-y-auto shrink-0 justify-between gap-6" id="preview-sidebar-controls">
+              <div className="flex flex-col space-y-5">
+                
+                {/* Header title */}
+                <div className="flex items-center justify-between border-b border-zinc-900 pb-4">
+                  <div className="flex items-center space-x-2">
+                    <Printer className="w-5 h-5 text-red-500" />
+                    <div>
+                      <h3 className="text-sm font-mono uppercase tracking-wider text-zinc-100 font-bold">Print Format Engine</h3>
+                      <p className="text-[10px] text-zinc-500 font-mono">Format Calibration System</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsPrintPreviewOpen(false)}
+                    className="p-1.5 hover:bg-zinc-900 text-zinc-400 hover:text-white rounded transition cursor-pointer"
+                    title="Close Print Preview"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Configuration: Typography selection */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Typography Font</label>
+                  <div className="grid grid-cols-3 gap-1" id="config-font-buttons">
+                    {(["Times New Roman", "Arial", "Courier New"] as const).map(font => (
+                      <button
+                        key={font}
+                        onClick={() => setPrintFontFamily(font)}
+                        className={`py-1.5 px-2 font-mono text-[10px] border tracking-tight rounded transition cursor-pointer select-none text-center ${
+                          printFontFamily === font 
+                            ? "bg-red-950/40 text-red-400 border-red-500/50 font-bold" 
+                            : "bg-zinc-900 border-zinc-850 text-zinc-400 hover:border-zinc-800 hover:text-zinc-200"
+                        }`}
+                      >
+                        {font === "Times New Roman" ? "Serif (TNR)" : font === "Arial" ? "Sans (Arial)" : "Mono (Courier)"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Configuration: Spacing selection */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Line Spacing</label>
+                  <div className="grid grid-cols-3 gap-1" id="config-line-spacing-buttons">
+                    {([
+                      { value: "1.0" as const, label: "Single (1.0)" },
+                      { value: "1.5" as const, label: "Medium (1.5)" },
+                      { value: "2.0" as const, label: "Double (2.0)" }
+                    ]).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setPrintLineSpacing(opt.value)}
+                        className={`py-1.5 px-1 font-mono text-[9px] border rounded transition cursor-pointer select-none text-center ${
+                          printLineSpacing === opt.value
+                            ? "bg-red-950/40 text-red-400 border-red-500/50 font-bold"
+                            : "bg-zinc-900 border-zinc-850 text-zinc-400 hover:border-zinc-800 hover:text-zinc-200"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Configuration: Font sizes */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Font Size (pt)</label>
+                  <div className="grid grid-cols-4 gap-1" id="config-font-size-buttons">
+                    {([10, 11, 12, 14] as const).map(sz => (
+                      <button
+                        key={sz}
+                        onClick={() => setPrintFontSize(sz)}
+                        className={`py-1.5 px-1 font-mono text-[10px] border rounded transition cursor-pointer select-none text-center ${
+                          printFontSize === sz
+                            ? "bg-red-950/40 text-red-400 border-red-500/50 font-bold"
+                            : "bg-zinc-900 border-zinc-850 text-zinc-400 hover:border-zinc-800 hover:text-zinc-200"
+                        }`}
+                      >
+                        {sz}pt
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Configuration: Margins selection */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Page Margins</label>
+                  <div className="grid grid-cols-3 gap-1" id="config-margin-buttons">
+                    {([
+                      { value: "0.5" as const, label: `Narrow (0.5")` },
+                      { value: "1.0" as const, label: `Standard (1.0")` },
+                      { value: "1.25" as const, label: `Wide (1.25")` }
+                    ]).map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setPrintPageMargin(opt.value)}
+                        className={`py-1.5 px-0.5 font-mono text-[9px] border rounded transition cursor-pointer select-none text-center ${
+                          printPageMargin === opt.value
+                            ? "bg-red-950/40 text-red-400 border-red-500/50 font-bold"
+                            : "bg-zinc-900 border-zinc-850 text-zinc-400 hover:border-zinc-800 hover:text-zinc-200"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div className="space-y-3 pt-3 border-t border-zinc-900">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Show Page Numbers</span>
+                    <button
+                      type="button"
+                      onClick={() => setPrintShowPageNumbers(!printShowPageNumbers)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        printShowPageNumbers ? "bg-red-650" : "bg-zinc-800"
+                      }`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        printShowPageNumbers ? "translate-x-4" : "translate-x-0"
+                      }`} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 block font-bold">Running Headers</span>
+                    <button
+                      type="button"
+                      onClick={() => setPrintShowHeaderFooter(!printShowHeaderFooter)}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        printShowHeaderFooter ? "bg-red-650" : "bg-zinc-800"
+                      }`}
+                    >
+                      <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        printShowHeaderFooter ? "translate-x-4" : "translate-x-0"
+                      }`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Alignment Guidelines Verification Alert */}
+                <div className="bg-zinc-900 border border-zinc-850 text-[10px] font-mono text-zinc-400 p-3 leading-relaxed rounded">
+                  <div className="flex items-center space-x-1.5 text-zinc-300 font-bold mb-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>MANUSCRIPT COMPLIANT</span>
+                  </div>
+                  System automatically verifies that all spacing increments, heading elevations, list blocks, and margins conform to peer-reviewed academic publication structures.
+                </div>
+
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col space-y-2 border-t border-zinc-900 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    downloadAcademicPdf(printPreviewTitle, printPreviewContent);
+                  }}
+                  className="w-full py-2.5 bg-gradient-to-r from-red-600 to-red-850 hover:from-red-500 hover:to-red-750 text-white border border-red-500/30 text-[11px] uppercase font-mono font-bold tracking-wider rounded transition flex items-center justify-center space-x-2 cursor-pointer shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Finalize & Export PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPrintPreviewOpen(false);
+                  }}
+                  className="w-full py-2 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 border border-zinc-850 text-[10px] uppercase font-mono tracking-wider rounded transition cursor-pointer"
+                >
+                  Cancel / Return
+                </button>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
       )}
 
       {/* Persistent Floating AI Onboarding Agent Bubble */}

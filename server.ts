@@ -4052,11 +4052,15 @@ async function main() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`AXOM OS Platform started and running exclusively on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`AXOM OS Platform started and running exclusively on http://localhost:${PORT}`);
+    });
+  }
 }
 
 main().catch(err => {
   console.error("AXOM OS: Failed to bootstrap server system:", err);
 });
+
+export default app;
