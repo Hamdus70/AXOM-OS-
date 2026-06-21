@@ -4,8 +4,6 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "functions": {
-    "api/chat/message.ts": {
-    },
     "api/index.ts": {
       "maxDuration": 15
     }

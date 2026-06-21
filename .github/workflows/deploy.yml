@@ -29,8 +29,15 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+      - name: Diagnostic Configuration Check
+        run: |
+          echo "=== VERIFYING FILE STRUCTURE ==="
+          ls -R api/ || echo "api/ folder not found"
+          echo "=== DUMPING VERCEL.JSON CONFIG ==="
+          cat vercel.json || echo "No vercel.json found"
+
       - name: Build Remote Deployment Artifacts
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --debug --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
