@@ -5,7 +5,6 @@
   "trailingSlash": false,
   "functions": {
     "api/chat/message.ts": {
-      "runtime": "edge"
     },
     "api/index.ts": {
       "maxDuration": 15
