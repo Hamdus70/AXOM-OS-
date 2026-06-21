@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/chat/message.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/onboarding/chat",
+      "dest": "api/chat/message.ts"
+    },
+    {
+      "src": "/api/chat",
+      "dest": "api/chat/message.ts"
+    },
+    {
+      "src": "/api/chat/message",
+      "dest": "api/chat/message.ts"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "server.ts"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ]
+}

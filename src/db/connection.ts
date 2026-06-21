@@ -69,7 +69,7 @@ export function getPostgresPool(): pg.Pool {
 
   try {
     const isProd = process.env.NODE_ENV === "production";
-    pgPool = new Pool({
+    const instPool = new Pool({
       connectionString: DATABASE_URL,
       // Handle high concurrency connection pooling safely
       max: 20, 
@@ -82,10 +82,34 @@ export function getPostgresPool(): pg.Pool {
     });
 
     // Handle idle connection errors to prevent backend node crashes
-    pgPool.on("error", (err) => {
+    instPool.on("error", (err) => {
       console.error("AXOM DB ENGINE: Unexpected error on idle PostgreSQL client pool", err);
     });
 
+    // Serverless Connection Failure Recovery (Automatic Single-Retry Event Loop)
+    const originalConnect = instPool.connect.bind(instPool);
+    instPool.connect = (async (...args: any[]) => {
+      try {
+        return await originalConnect(...args);
+      } catch (err) {
+        console.warn("AXOM DB ENGINE: Handshake attempt failed. triggering automatic handshake retry...", err);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return await originalConnect(...args);
+      }
+    }) as any;
+
+    const originalQuery = instPool.query.bind(instPool);
+    instPool.query = (async (...args: any[]) => {
+      try {
+        return await originalQuery(...args);
+      } catch (err) {
+        console.warn("AXOM DB ENGINE: Execution attempt failed. triggering automatic query retry...", err);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return await originalQuery(...args);
+      }
+    }) as any;
+
+    pgPool = instPool;
     console.log("AXOM DB ENGINE: Cloud SQL PostgreSQL connection pool provisioned successfully.");
   } catch (err) {
     console.error("AXOM DB ENGINE: Critical failure in database pool creation:", err);

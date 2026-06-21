@@ -21,6 +21,8 @@ import {
   deleteProject 
 } from "./src/db/connection.js";
 
+import { getProjectsCatalog } from "./src/controllers/projectController.js";
+
 import {
   bootstrapVectorStoreSchema,
   storeDocumentGuideline,
@@ -869,10 +871,7 @@ async function saveProjects(projects: ResearchProject[]) {
 }
 
 // REST API Endpoints for Research Projects
-app.get("/api/projects", async (req, res) => {
-  const projects = await loadProjects();
-  res.json(projects);
-});
+app.get("/api/projects", getProjectsCatalog);
 
 /**
  * REST API Endpoint to generate a secure presigned upload URL and temporary signature key.

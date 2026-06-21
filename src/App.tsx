@@ -179,13 +179,33 @@ export default function App() {
     setIsOnboardingSending(true);
 
     try {
-      const res = await fetch("/api/onboarding/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages })
-      });
+      let res: Response | null = null;
+      let attempt = 0;
+      const maxAttempts = 3;
+      let delay = 500; // Exponential backoff initial delay
 
-      if (!res.ok) throw new Error("Onboarding transmission failure.");
+      while (attempt < maxAttempts) {
+        try {
+          res = await fetch("/api/onboarding/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: updatedMessages })
+          });
+          if (res.ok) {
+            break; // connection secure, exit loop
+          }
+          console.warn(`AXOM Onboarding Transmit: Attempt ${attempt + 1} status ${res.status}. Retrying in ${delay}ms...`);
+        } catch (fetchErr) {
+          console.warn(`AXOM Onboarding Transmit: Attempt ${attempt + 1} connection handshake dropped. Retrying in ${delay}ms...`, fetchErr);
+        }
+        attempt++;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay *= 2.5; // exponential backoff multiplier
+        }
+      }
+
+      if (!res || !res.ok) throw new Error("Onboarding transmission failure.");
 
       const data = await res.json();
       const modelReply = data.text;
