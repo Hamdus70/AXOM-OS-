@@ -405,7 +405,8 @@ export default function App() {
   const [activeHighlightHover, setActiveHighlightHover] = useState<any | null>(null);
 
   // Helpers
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const foundProject = projects.find((p) => p.id === selectedProjectId);
+  const selectedProject = foundProject ? { ...foundProject, chapters: foundProject.chapters || {} } : { id: "", title: "", chapters: {}, outline: [], references: [], dataTables: [] } as any;
 
   const isChapterLocked = (key: string): boolean => {
     if (!selectedProject) return false;
@@ -988,7 +989,7 @@ export default function App() {
   // Update local editor when selected chapter changes
   useEffect(() => {
     if (selectedProject) {
-      const chapter = selectedProject.chapters[currentChapterKey];
+      const chapter = selectedProject.chapters?.[currentChapterKey];
       setEditorContent(chapter?.content || "");
       setEditorSaveStatus("clean");
     }
@@ -1193,8 +1194,12 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
   const fetchProjects = async () => {
     try {
       const res = await fetch("/api/projects");
-      if (!res.ok) throw new Error("Could not load projects catalog");
-      const data = await res.json();
+      let data = [];
+      if (res.ok) {
+        data = await res.json();
+      } else {
+        console.error("Failed to load projects catalog, falling back to empty list.");
+      }
       setProjects(data);
       if (data.length > 0 && !selectedProjectId) {
         setSelectedProjectId(data[0].id);
@@ -1915,7 +1920,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
     setEditorSaveStatus("saving");
     try {
-      const originalChapter = selectedProject.chapters[currentChapterKey] || {};
+      const originalChapter = selectedProject.chapters?.[currentChapterKey] || {};
       const updatedChapters = {
         ...selectedProject.chapters,
         [currentChapterKey]: {
@@ -3608,7 +3613,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
                         {/* Interactive Data Compliance Trace Line linking to Validation dashboard */}
                         {(() => {
-                          const activeCh = selectedProject.chapters[currentChapterKey];
+                          const activeCh = selectedProject.chapters?.[currentChapterKey];
                           const isAwaiting = activeCh?.status === "completed" && !activeCh?.isApproved;
                           if (!isAwaiting) return null;
                           return (
@@ -3622,7 +3627,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
 
                         {selectedProject.outline && selectedProject.outline.map((item, index) => {
                           const chapKey = `chapter${index + 1}`;
-                          const chapterInfo = selectedProject.chapters[chapKey];
+                          const chapterInfo = selectedProject.chapters?.[chapKey];
                           const isCompleted = chapterInfo?.status === "completed";
                           const isCurrentActive = currentChapterKey === chapKey;
                           const isLocked = isChapterLocked(chapKey);
@@ -3801,14 +3806,14 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                             <span className={isDarkMode ? "text-zinc-400" : "text-zinc-650"}>AI DETECTION RESISTANCE</span>
                             <span className={isDarkMode ? "text-emerald-400" : "text-emerald-600"}>
                               {selectedProject.chapters[currentChapterKey]?.status === "completed" 
-                                ? `${selectedProject.chapters[currentChapterKey]?.aiOriginalityScore ?? 98}% Human` 
+                                ? `${selectedProject.chapters?.[currentChapterKey]?.aiOriginalityScore ?? 98}% Human` 
                                 : "98% Human (Vetted)"}
                             </span>
                           </div>
                           <div className={`h-2 rounded-full overflow-hidden relative ${isDarkMode ? "bg-zinc-900" : "bg-zinc-200"}`}>
                             <div 
                               className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 rounded-full animate-pulse"
-                              style={{ width: `${selectedProject.chapters[currentChapterKey]?.status === "completed" ? (selectedProject.chapters[currentChapterKey]?.aiOriginalityScore ?? 98) : 98}%` }}
+                              style={{ width: `${selectedProject.chapters?.[currentChapterKey]?.status === "completed" ? (selectedProject.chapters?.[currentChapterKey]?.aiOriginalityScore ?? 98) : 98}%` }}
                             />
                           </div>
                           <div className="flex justify-between items-center mt-1 text-[7.5px] text-zinc-500 font-mono">
@@ -3823,14 +3828,14 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                             <span className={isDarkMode ? "text-zinc-400" : "text-zinc-650"}>PLAGIARISM SIMILARITY INDEX</span>
                             <span className="text-teal-555">
                               {selectedProject.chapters[currentChapterKey]?.status === "completed" 
-                                ? `${selectedProject.chapters[currentChapterKey]?.plagiarismScore ?? 2.4}% Similarity` 
+                                ? `${selectedProject.chapters?.[currentChapterKey]?.plagiarismScore ?? 2.4}% Similarity` 
                                 : "0.0% Similarity (Secure)"}
                             </span>
                           </div>
                           <div className={`h-2 rounded-full overflow-hidden relative ${isDarkMode ? "bg-zinc-900" : "bg-zinc-200"}`}>
                             <div 
                               className="h-full bg-gradient-to-r from-emerald-500 to-indigo-500 rounded-full"
-                              style={{ width: `${selectedProject.chapters[currentChapterKey]?.status === "completed" ? (selectedProject.chapters[currentChapterKey]?.plagiarismScore ?? 2.4) * 8 : 4}%` }}
+                              style={{ width: `${selectedProject.chapters?.[currentChapterKey]?.status === "completed" ? (selectedProject.chapters?.[currentChapterKey]?.plagiarismScore ?? 2.4) * 8 : 4}%` }}
                             />
                           </div>
                           <div className="flex justify-between items-center mt-1 text-[7.5px] text-zinc-500 font-mono">

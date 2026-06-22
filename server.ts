@@ -21,6 +21,7 @@ import {
 } from "./src/db/connection.js";
 
 import { getProjectsCatalog } from "./src/controllers/projectController.js";
+import { upsertChapter } from "./src/controllers/chapterController.js";
 
 import {
   bootstrapVectorStoreSchema,
@@ -874,6 +875,7 @@ async function saveProjects(projects: ResearchProject[]) {
 
 // REST API Endpoints for Research Projects
 app.get("/api/projects", getProjectsCatalog);
+app.post("/api/chapters", upsertChapter);
 
 /**
  * REST API Endpoint to generate a secure presigned upload URL and temporary signature key.

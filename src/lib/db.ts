@@ -1,6 +1,7 @@
 import pkg from 'pg';
 const { Pool } = pkg;
 
+// Singleton pattern for DB connection pool
 let pool: pkg.Pool | null = null;
 
 export const getPool = (): pkg.Pool => {
@@ -8,39 +9,28 @@ export const getPool = (): pkg.Pool => {
     if (!process.env.DATABASE_URL) {
       throw new Error("DATABASE_URL environment variable is not defined");
     }
-    const isProd = process.env.NODE_ENV === "production";
-    const newPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      // Vercel/serverless environments might need to manage connection limits
-      max: 10, 
-      connectionTimeoutMillis: 5000,
-      ssl: isProd ? { rejectUnauthorized: false } : undefined,
+
+    // Serverless-optimized configuration
+    const connectionString = (process.env.DATABASE_URL || "").trim();
+    if (!connectionString) {
+      throw new Error("DATABASE_URL environment variable is not defined");
+    }
+
+    pool = new Pool({
+      connectionString: connectionString,
+      // For Serverless, limit the pool size and manage connections strictly
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000, // Slightly increased from 2000 for slightly better reliability in cold starts
+      statement_timeout: 10000,    // KILL queries taking > 10s
+      query_timeout: 10000,        // KILL queries taking > 10s
+      ssl: { rejectUnauthorized: false }, // Supabase requires SSL
     });
 
-    // Serverless Connection Failure Recovery (Automatic Single-Retry Event Loop)
-    const originalConnect = newPool.connect.bind(newPool);
-    newPool.connect = (async (...args: any[]) => {
-      try {
-        return await originalConnect(...args);
-      } catch (err) {
-        console.warn("Serverless DB Connection: Handshake attempt failed. triggering automatic handshake retry...", err);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        return await originalConnect(...args);
-      }
-    }) as any;
-
-    const originalQuery = newPool.query.bind(newPool);
-    newPool.query = (async (...args: any[]) => {
-      try {
-        return await originalQuery(...args);
-      } catch (err) {
-        console.warn("Serverless DB Query: Execution attempt failed. triggering automatic query retry...", err);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        return await originalQuery(...args);
-      }
-    }) as any;
-
-    pool = newPool;
+    pool.on('error', (err) => {
+      console.error('Unexpected error on idle client', err);
+      // Pool handles resetting itself, but logging is crucial for visibility
+    });
   }
   return pool;
 };

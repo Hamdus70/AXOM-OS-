@@ -1,37 +1,30 @@
 import { Request, Response } from "express";
-import { fetchAllProjects } from "../db/connection";
+import { getPool } from "../lib/db.js";
 
-/**
- * Defensive Project Fetch Controller
- * Implements catalog retrieval with cloud database-only queries and strict catch-all safety.
- */
 export async function getProjectsCatalog(req: Request, res: Response) {
+  const pool = getPool();
+  let client;
   try {
-    console.log("Vercel Catalog Read: Accessing projects inventory.");
+    // Acquire a dedicated client for this request to ensure proper release
+    client = await pool.connect();
     
-    let projects: any[] = [];
+    // Using SELECT * to ensure all columns (including chapters, outline, etc.) are fetched
+    const result = await client.query(`
+      SELECT *
+      FROM projects 
+      ORDER BY created_at DESC
+    `);
     
-    // 1. Fetch Cloud Database exclusively
-    try {
-      const dbPrjs = await fetchAllProjects();
-      if (dbPrjs && Array.isArray(dbPrjs)) {
-        projects = dbPrjs;
-        console.log(`Vercel Catalog Read: Successfully retrieved ${projects.length} portfolios from cloud relational database.`);
-      } else {
-        console.warn("Vercel Catalog Read: Database returned no records or empty dataset.");
-      }
-    } catch (dbError: any) {
-      // Gracefully catch database exceptions (table not created, connection refused, query timeout) 
-      // strictly ensuring no system exception escapes to cause an express 5xx crash.
-      console.error("Vercel Catalog Read Error (Cloud database failed/timed out):", dbError.stack || dbError);
-    }
-
-    // 2. Clear out any local file reading attempts as per architectural mandate for serverless compat.
-    // 3. Strict structural checks and clean HTTP 200 empty array return
-    return res.status(200).json(projects);
+    // Ensure we always return an array, even if result.rows is nullish
+    return res.status(200).json(result.rows || []);
   } catch (error: any) {
-    // 4. Fallback safeguard catch-all to prevent unhandled express route crashes on serverless cold starts
-    console.error("Vercel Catalog Read Catch-All Error:", error.stack || error);
+    console.error("Vercel Catalog Read Error (Silent Fallback):", error);
+    // Explicitly return an empty array on any failure to prevent UI crashes
     return res.status(200).json([]);
+  } finally {
+    // Crucial: Release the client back to the pool immediately after execution or on error
+    if (client) {
+      client.release();
+    }
   }
 }
