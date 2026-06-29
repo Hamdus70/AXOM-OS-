@@ -999,10 +999,13 @@ app.post("/api/onboarding/chat", async (req, res) => {
       return res.status(400).json({ error: "Messages array is required." });
     }
 
-    // Identify user and model messages
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    // Identify user messages for simulated fallback
     const userMessages = messages.filter(m => m.role === "user");
 
-    // Check if Gemini Client is active
     if (aiClient) {
       try {
         let contentsPayload = messages.map(m => ({
@@ -1017,69 +1020,42 @@ app.post("/api/onboarding/chat", async (req, res) => {
           }];
         }
 
-        const { response } = await executeResilientGeminiCall({
+        const responseStream = await aiClient.models.generateContentStream({
           model: "gemini-3.5-flash",
           contents: contentsPayload,
           config: {
             systemInstruction: `You are an Expert Academic Dean, Elite Research Consultant, and Senior Conversational AI Architect specializing in research methodology validation. Your task is to act as the "AXOM OS Strategic Onboarding Assistant"—a conversational AI chatbot that interviews students to gather, refine, and lock down every variable required to initialize a flawless, publication-grade research baseline.
 
-You must strictly execute this interview following the programmatic logic, validation rules, and discipline-specific matrices detailed below.
+You must strictly execute this interview following the programmatic logic, validation rules, and discipline-specific matrices.
 
----
-
-### 1. DYNAMIC STEP-BY-STEP INTERVIEW PROTOCOL
-
-You are forbidden from presenting the user with a giant wall of questions. You must ask exactly ONE clear, concise question at a time. Wait for the user's response, evaluate its validity, and only proceed to the next step when the current variable is structurally sound.
-
-- **STEP 1: Topic & Scope Validation**
-  * Collect the research title or core phenomenon. Validate that the title contains a clear independent variable, dependent variable, and target population.
-- **STEP 2: Faculty & Discipline Alignment**
-  * Identify the user's academic department (e.g., Clinical Nursing, Computer Engineering, Business Administration, History). 
-- **STEP 3: Methodological Strategy**
-  * Establish the study design (Quantitative, Qualitative, or Mixed Methods). Ensure this design matches the reality of the discipline (e.g., if Nursing/Public Health, recommend Quantitative Epidemiological or Qualitative Phenomenological designs).
-- **STEP 4: Population & Geographical Setting**
-  * Extract the exact target population (e.g., pregnant women, enterprise software developers) and the specific geographical or institutional setting (e.g., General Hospital Saki, tech hubs in Lagos).
-- **STEP 5: Target Academic Degree & Citation Matrix**
-  * Identify the academic tier (Undergraduate vs. Postgraduate/Ph.D.) and map the mandatory citation style (e.g., APA 7th for Nursing, IEEE for Engineering, MLA for Literature).
-
----
-
-### 2. REAL-TIME VALIDATION & CORRECTION MECHANISMS
-
-You are not a passive data-entry clerk; you are an active academic advisor. Apply these conversational correction rules instantly during the chat session:
-
-1. **Banish Methodological Mismatches:** If a user selects "Faculty of Engineering" but requests a purely qualitative narrative study without system models or empirical math, gently intervene: "As an Engineering project, global academic standards require an empirical, data-driven, or architectural optimization approach. Let us re-align your strategy to include a quantitative or experimental validation framework."
-2. **Flag Premature/Hallucinated Inclusions:** If a user attempts to introduce arbitrary sample sizes or statistical data inside Chapter 1 scoping queries before running proper sampling methodologies, flag it immediately: "We should hold off on fixing the absolute sample metrics until we mathematically define your sample size via Cochran/Yamane formulas in Chapter 3. Let's keep our baseline focus on the core variables."
-3. **The Sanitation Filter:** Do not output any markdown bolding or emphasis asterisks (** or *) in your conversational responses. Rely entirely on clean paragraph structures and explicit text blocks.
-
----
-
-### 3. THE LOCKDOWN & BASELINE EXPORT INSTRUCTION
-
-Once all five steps are completed successfully, you must freeze the conversation, summarize the finalized parameters in a clean terminal overview, and output a structured JSON payload for the AXOM OS backend database pipeline.
-
-The payload structure must strictly map to this schema:
+- Ask exactly ONE clear question at a time.
+- Keep responses concise and academic.
+- Do NOT output any markdown bolding/italic asterisks (* or **) under any circumstance.
+- Once all five variables (Topic, Faculty, Study Design, Setting, Citation) are successfully collected, freeze the conversation and output a JSON block matching this exact schema:
 {
   "project_baseline": {
-    "title": "STRICTLY UPPERCASE CLEAN TITLE STRIPPED OF ASTERISKS",
+    "title": "STRICTLY UPPERCASE CLEAN TITLE",
     "faculty": "Validated Faculty Node",
     "study_design": "Quantitative | Qualitative | Mixed",
-    "setting": "Specific Geographical/Institutional Location",
+    "setting": "Specific Institution/Location Setting",
     "citation_format": "APA | IEEE | MLA | Harvard",
     "academic_tier": "Undergraduate | Postgraduate"
   }
-}
-
-Begin the onboarding sequence now by introducing yourself as the AXOM OS Strategic Assistant, stating your mission, and requesting the user's proposed research topic. Ask exactly one question.`
+}`
           }
         });
 
-        let rawResponseText = response.text || "";
-        let projectBaseline: any = null;
+        let accumulatedText = "";
+        for await (const chunk of responseStream) {
+          const chunkText = chunk.text || "";
+          accumulatedText += chunkText;
+          const cleanChunk = chunkText.replace(/\*\*?/g, "");
+          res.write(`data: ${JSON.stringify({ text: cleanChunk })}\n\n`);
+        }
 
-        // Scan for JSON block containing project_baseline in response
-        if (rawResponseText.includes("project_baseline")) {
-          const jsonMatch = rawResponseText.match(/\{[\s\S]*"project_baseline"[\s\S]*\}/);
+        let projectBaseline: any = null;
+        if (accumulatedText.includes("project_baseline")) {
+          const jsonMatch = accumulatedText.match(/\{[\s\S]*"project_baseline"[\s\S]*\}/);
           if (jsonMatch) {
             try {
               const parsed = JSON.parse(jsonMatch[0]);
@@ -1092,51 +1068,35 @@ Begin the onboarding sequence now by introducing yourself as the AXOM OS Strateg
           }
         }
 
-        // Enforce the Sanitation Filter over markdown bold/italic asterisks
-        let cleanText = rawResponseText.replace(/\*\*?/g, "");
+        res.write(`data: ${JSON.stringify({ done: true, isComplete: !!projectBaseline, projectBaseline })}\n\n`);
+        res.end();
+        return;
 
-        return res.json({
-          text: cleanText,
-          isComplete: !!projectBaseline,
-          projectBaseline
-        });
       } catch (geminiChatError: any) {
         console.warn("Onboarding chat system failure, opting down to high-fidelity simulated backup:", geminiChatError.message || geminiChatError);
       }
     }
 
     // --- FALLBACK SMART CONVERSATIONAL ROUTINE ---
-    // If aiClient is null, we run the following highly structured onboarding simulator.
+    // If aiClient is null, we run the following highly structured onboarding simulator in streaming format.
     const stepCount = userMessages.length;
     let replyText = "";
     let projectBaseline: any = null;
 
     if (stepCount === 0) {
-      replyText = `Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. 
-
-My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline.
-
-To list your design specifications in high standing, let us start with your proposed research topic. What is the working title or core phenomenon of your project?`;
+      replyText = `Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. \n\nMy mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline.\n\nTo list your design specifications in high standing, let us start with your proposed research topic. What is the working title or core phenomenon of your project?`;
     } else if (stepCount === 1) {
       const topic = userMessages[0].text;
-      replyText = `Perfect. Your topic "${topic}" establishes a clear research domain.
-
-Next, please define your Academic Faculty or Department. For example, Clinical Nursing, Computer Engineering, Business Administration, or Social Studies. This allows me to align discipline-specific matrices.`;
+      replyText = `Perfect. Your topic "${topic}" establishes a clear research domain.\n\nNext, please define your Academic Faculty or Department. For example, Clinical Nursing, Computer Engineering, Business Administration, or Social Studies. This allows me to align discipline-specific matrices.`;
     } else if (stepCount === 2) {
       const faculty = userMessages[1].text;
-      replyText = `Understood. Aligning proposal parameters with the ${faculty} node.
-
-Now, let us lock down your core Methodological Strategy. Will your investigation run a Quantitative, Qualitative, or Mixed Methods design? Ensure this aligns with your faculty. For engineering, I recommend a Quantitative or Optimization model.`;
+      replyText = `Understood. Aligning proposal parameters with the ${faculty} node.\n\nNow, let us lock down your core Methodological Strategy. Will your investigation run a Quantitative, Qualitative, or Mixed Methods design? Ensure this aligns with your faculty. For engineering, I recommend a Quantitative or Optimization model.`;
     } else if (stepCount === 3) {
       const design = userMessages[2].text;
-      replyText = `Configured. Mapped design as ${design}.
-
-Step 4 requires defining your geographical setting and target population. Who are your target subjects (e.g., ICU nurses, mobile subscribers), and what is the physical or institutional setting of your study?`;
+      replyText = `Configured. Mapped design as ${design}.\n\nStep 4 requires defining your geographical setting and target population. Who are your target subjects (e.g., ICU nurses, mobile subscribers), and what is the physical or institutional setting of your study?`;
     } else if (stepCount === 4) {
       const setting = userMessages[3].text;
-      replyText = `Noted. Setting recorded as: ${setting}.
-
-Finally, let us set the Academic Degree Level (Undergraduate, Postgraduate, or Ph.D.) and your obligatory citation style (e.g., APA 7th Edition, IEEE, MLA, Chicago, or Harvard). This wraps up our validation gateway.`;
+      replyText = `Noted. Setting recorded as: ${setting}.\n\nFinally, let us set the Academic Degree Level (Undergraduate, Postgraduate, or Ph.D.) and your obligatory citation style (e.g., APA 7th Edition, IEEE, MLA, Chicago, or Harvard). This wraps up our validation gateway.`;
     } else {
       // Completed! We compile and output the JSON payload.
       const titleUser = userMessages[0]?.text || "MOCK RESEARCH TOPIC";
@@ -1164,34 +1124,18 @@ Finally, let us set the Academic Degree Level (Undergraduate, Postgraduate, or P
         academic_tier: tierLevel
       };
 
-      replyText = `Onboarding Interview successfully finalized! Every parameter meets global research standards. I have frozen the conversation and submitted the parameters to the AXOM OS Core engine.
-
----
-VALIDATION BASELINE LOCKDOWN SUMMARY:
-- Title: ${projectBaseline.title}
-- Faculty: ${projectBaseline.faculty}
-- Methodological Strategy: ${projectBaseline.study_design}
-- Population/Setting: ${projectBaseline.setting}
-- Academic Level: ${projectBaseline.academic_tier}
-- Citation Style: ${projectBaseline.citation_format}
----
-
-Your workspace has been structured. The baseline database JSON below has been transmitted successfully.
-
-{
-  "project_baseline": ${JSON.stringify(projectBaseline, null, 2)}
-}`;
+      replyText = `Onboarding Interview successfully finalized! Every parameter meets global research standards. I have frozen the conversation and submitted the parameters to the AXOM OS Core engine.\n\n---\nVALIDATION BASELINE LOCKDOWN SUMMARY:\n- Title: ${projectBaseline.title}\n- Faculty: ${projectBaseline.faculty}\n- Methodological Strategy: ${projectBaseline.study_design}\n- Population/Setting: ${projectBaseline.setting}\n- Academic Level: ${projectBaseline.academic_tier}\n- Citation Style: ${projectBaseline.citation_format}\n---\n\nYour workspace has been structured. The baseline database JSON below has been transmitted successfully.\n\n{\n  "project_baseline": ${JSON.stringify(projectBaseline, null, 2)}\n}`;
     }
 
-    res.json({
-      text: replyText,
-      isComplete: !!projectBaseline,
-      projectBaseline
-    });
+    // Stream the simulated response
+    res.write(`data: ${JSON.stringify({ text: replyText })}\n\n`);
+    res.write(`data: ${JSON.stringify({ done: true, isComplete: !isNaN(stepCount) && stepCount >= 4, projectBaseline })}\n\n`);
+    res.end();
 
   } catch (err: any) {
     console.error("Onboarding chat system failure:", err);
-    res.status(500).json({ error: "Onboarding gateway error. " + err.message });
+    res.write(`data: ${JSON.stringify({ error: err.message || "Onboarding gateway error" })}\n\n`);
+    res.end();
   }
 });
 

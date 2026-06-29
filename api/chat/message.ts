@@ -1,17 +1,21 @@
 import { GoogleGenAI } from "@google/genai";
 
-export const config = {
-  runtime: "edge", // Bypasses the 10-second serverless execution cap completely
-};
+export const runtime = "edge";
 
-/**
- * High-Performance, Non-Blocking Serverless Chat Handler
- * Runs on the Vercel Edge Runtime using modern @google/genai SDK.
- */
-export default async function handler(req: any) {
+export default async function handler(req: Request) {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed. Use POST." }), {
       status: 405,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // A. Robust API Key Check
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.trim() === "" || apiKey === "MY_GEMINI_API_KEY") {
+    console.error("Vercel Edge Chat: GEMINI_API_KEY is not configured.");
+    return new Response(JSON.stringify({ error: "AI_CONFIG_MISSING" }), {
+      status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
@@ -25,26 +29,15 @@ export default async function handler(req: any) {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.trim() === "") {
-      console.warn("Vercel Edge Chat: GEMINI_API_KEY is not configured.");
-      return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // 1. Initialize modern Gemini SDK client inside the function execution lifecycle
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
-          "User-Agent": "aistudio-build",
+          "User-Agent": "axom-os-assistant",
         },
       },
     });
 
-    // Format messages mapping role to parts according to Gemini structural specification
     const contents = messages.map((m: any) => ({
       role: m.role === "user" ? "user" : "model",
       parts: [{ text: m.text }]
@@ -57,14 +50,7 @@ export default async function handler(req: any) {
       });
     }
 
-    // 2. Wrap client call in protective try-catch for external network drops and timeouts
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents,
-        config: {
-          systemInstruction: `You are an Expert Academic Dean, Elite Research Consultant, and Senior Conversational AI Architect specializing in research methodology validation. Your task is to act as the "AXOM OS Strategic Onboarding Assistant"—a conversational AI chatbot that interviews students to gather, refine, and lock down every variable required to initialize a flawless, publication-grade research baseline.
+    const systemInstruction = `You are an Expert Academic Dean, Elite Research Consultant, and Senior Conversational AI Architect specializing in research methodology validation. Your task is to act as the "AXOM OS Strategic Onboarding Assistant"—a conversational AI chatbot that interviews students to gather, refine, and lock down every variable required to initialize a flawless, publication-grade research baseline.
 
 You must strictly execute this interview following the programmatic logic, validation rules, and discipline-specific matrices.
 
@@ -81,50 +67,70 @@ You must strictly execute this interview following the programmatic logic, valid
     "citation_format": "APA | IEEE | MLA | Harvard",
     "academic_tier": "Undergraduate | Postgraduate"
   }
-}`
-        }
-      });
-    } catch (apiError: any) {
-      console.error("Vercel Edge Chat API call failed:", apiError);
-      return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+}`;
 
-    const rawResponseText = response.text || "";
-    
-    let projectBaseline: any = null;
-    if (rawResponseText.includes("project_baseline")) {
-      const jsonMatch = rawResponseText.match(/\{[\s\S]*"project_baseline"[\s\S]*\}/);
-      if (jsonMatch) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
         try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.project_baseline) {
-            projectBaseline = parsed.project_baseline;
+          const responseStream = await ai.models.generateContentStream({
+            model: "gemini-3.5-flash",
+            contents,
+            config: {
+              systemInstruction,
+            },
+          });
+
+          let accumulatedText = "";
+          for await (const chunk of responseStream) {
+            const chunkText = chunk.text || "";
+            accumulatedText += chunkText;
+            const cleanChunk = chunkText.replace(/\*\*?/g, "");
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: cleanChunk })}\n\n`));
           }
-        } catch (err) {
-          console.warn("Could not parse onboarding JSON outcome on Edge:", err);
+
+          let projectBaseline: any = null;
+          if (accumulatedText.includes("project_baseline")) {
+            const jsonMatch = accumulatedText.match(/\{[\s\S]*"project_baseline"[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.project_baseline) {
+                  projectBaseline = parsed.project_baseline;
+                }
+              } catch (err) {
+                console.warn("Could not parse onboarding JSON outcome on Edge:", err);
+              }
+            }
+          }
+
+          const finalPayload = JSON.stringify({
+            done: true,
+            isComplete: !!projectBaseline,
+            projectBaseline,
+          });
+          controller.enqueue(encoder.encode(`data: ${finalPayload}\n\n`));
+          controller.close();
+        } catch (streamError: any) {
+          console.error("Vercel Edge Streaming error:", streamError);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: streamError.message || "Streaming failed" })}\n\n`));
+          controller.close();
         }
-      }
-    }
+      },
+    });
 
-    // Enforce sanitation filter over markdown bold/italic asterisks
-    const cleanText = rawResponseText.replace(/\*\*?/g, "");
-
-    return new Response(JSON.stringify({
-      text: cleanText,
-      isComplete: !!projectBaseline,
-      projectBaseline
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
     });
 
   } catch (error: any) {
-    console.error("Vercel Catalog/Chat General Error on Edge handler:", error);
-    return new Response(JSON.stringify({ success: false, error: "AI_PROVISIONING_TIMEOUT" }), {
-      status: 200,
+    console.error("Vercel Edge Handler General Error:", error);
+    return new Response(JSON.stringify({ error: "Onboarding transmission failure" }), {
+      status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }

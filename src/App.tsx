@@ -154,8 +154,33 @@ export default function App() {
             body: JSON.stringify({ messages: [] })
           });
           if (res.ok) {
-            const data = await res.json();
-            setOnboardingMessages([{ role: "model", text: data.text }]);
+            const reader = res.body?.getReader();
+            const decoder = new TextDecoder();
+            if (reader) {
+              setOnboardingMessages([{ role: "model", text: "" }]);
+              let accumulatedText = "";
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunkText = decoder.decode(value, { stream: true });
+                const lines = chunkText.split("\n");
+                for (const line of lines) {
+                  if (line.startsWith("data: ")) {
+                    try {
+                      const cleaned = line.slice(6).trim();
+                      if (!cleaned) continue;
+                      const payload = JSON.parse(cleaned);
+                      if (payload.text) {
+                        accumulatedText += payload.text;
+                        setOnboardingMessages([{ role: "model", text: accumulatedText }]);
+                      }
+                    } catch (err) {}
+                  }
+                }
+              }
+            } else {
+              setOnboardingMessages([{ role: "model", text: "Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline. What is your proposed research topic?" }]);
+            }
           } else {
             setOnboardingMessages([{ role: "model", text: "Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. My mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline. What is your proposed research topic?" }]);
           }
@@ -207,16 +232,82 @@ export default function App() {
         }
       }
 
-      if (!res || !res.ok) throw new Error("Onboarding transmission failure.");
+      if (!res || !res.ok) {
+        if (res) {
+          const errData = await res.json().catch(() => ({}));
+          if (errData.error === "AI_CONFIG_MISSING") {
+            setOnboardingMessages(prev => [...prev, { role: "model", text: "AI Configuration error: GEMINI_API_KEY is missing. Please populate your environment variables to activate onboarding." }]);
+            setIsOnboardingSending(false);
+            return;
+          }
+        }
+        throw new Error("Onboarding transmission failure.");
+      }
 
-      const data = await res.json();
-      const modelReply = data.text;
-      
-      setOnboardingMessages(prev => [...prev, { role: "model", text: modelReply }]);
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("No response body reader found.");
 
-      if (data.isComplete && data.projectBaseline) {
+      setOnboardingMessages(prev => [...prev, { role: "model", text: "" }]);
+
+      let accumulatedText = "";
+      let completeBaseline: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunkText = decoder.decode(value, { stream: true });
+        const lines = chunkText.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const cleaned = line.slice(6).trim();
+              if (!cleaned) continue;
+              const payload = JSON.parse(cleaned);
+
+              if (payload.error === "AI_CONFIG_MISSING") {
+                setOnboardingMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === "model") {
+                    last.text = "AI Configuration error: GEMINI_API_KEY is missing. Please populate your environment variables.";
+                  }
+                  return updated;
+                });
+                setIsOnboardingSending(false);
+                return;
+              }
+
+              if (payload.text) {
+                accumulatedText += payload.text;
+                setOnboardingMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === "model") {
+                    last.text = accumulatedText;
+                  }
+                  return updated;
+                });
+              }
+
+              if (payload.done) {
+                if (payload.isComplete && payload.projectBaseline) {
+                  completeBaseline = payload.projectBaseline;
+                }
+              }
+            } catch (err) {
+              // Ignore partial JSON string parsing failures
+            }
+          }
+        }
+      }
+
+      setIsOnboardingSending(false);
+
+      if (completeBaseline) {
         setIsOnboardingCreating(true);
-        const baseline = data.projectBaseline;
+        const baseline = completeBaseline;
         
         const createRes = await fetch("/api/projects", {
           method: "POST",
