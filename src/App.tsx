@@ -170,6 +170,15 @@ export default function App() {
                       const cleaned = line.slice(6).trim();
                       if (!cleaned) continue;
                       const payload = JSON.parse(cleaned);
+                      if (payload.error) {
+                        let rawDetails = payload.details;
+                        let errorMessage = (typeof rawDetails === 'string' ? rawDetails : (rawDetails ? JSON.stringify(rawDetails) : "An error occurred.")) || "An error occurred.";
+                        if (errorMessage && typeof errorMessage === 'string' && errorMessage.toLowerCase().includes("quota")) {
+                          errorMessage = "Gemini API daily quota exceeded. Please try again tomorrow.";
+                        }
+                        setOnboardingMessages(prev => [...prev, { role: "model", text: errorMessage }]);
+                        break;
+                      }
                       if (payload.text) {
                         accumulatedText += payload.text;
                         setOnboardingMessages([{ role: "model", text: accumulatedText }]);
@@ -270,7 +279,15 @@ export default function App() {
             const data = JSON.parse(cleaned);
             if (data.error) {
               console.error("CRITICAL_STREAM_FAIL:", data.error, data.details);
-              setOnboardingMessages(prev => [...prev.slice(0, -1), { role: "model", text: `Error: ${data.error} - ${data.details}` }]);
+              let errorMessage = data.error === "GEMINI_API_FAILURE" 
+                ? "The AI assistant is currently busy due to high demand. Please try again in a moment."
+                : `Error: ${data.error} - ${data.details}`;
+              
+              if (data.details && data.details.toLowerCase().includes("quota")) {
+                errorMessage = "Gemini API daily quota exceeded. Please try again tomorrow.";
+              }
+
+              setOnboardingMessages(prev => [...prev.slice(0, -1), { role: "model", text: errorMessage }]);
               hasError = true;
               break;
             }
@@ -531,6 +548,7 @@ export default function App() {
 
     let match;
     while ((match = entryRegex.exec(normalized)) !== null) {
+      if (!match[1]) continue;
       const entryType = match[1].toLowerCase();
       const rawKey = match[2];
       const fieldsBody = match[3];
@@ -541,6 +559,7 @@ export default function App() {
       const fieldRegex = /\s*([a-zA-Z0-9_\-]+)\s*=\s*(?:\{([\s\S]*?)\}|"([\s\S]*?)"|([^\s,}]+))/gi;
       let fieldMatch;
       while ((fieldMatch = fieldRegex.exec(fieldsBody)) !== null) {
+        if (!fieldMatch[1]) continue;
         const fieldName = fieldMatch[1].trim().toLowerCase();
         let fieldValue = (fieldMatch[2] || fieldMatch[3] || fieldMatch[4] || "").trim();
         
@@ -602,7 +621,7 @@ export default function App() {
         const headerMatch = trimmedEntry.match(/^([a-zA-Z]+)\s*\{\s*([a-zA-Z0-9_\-:\.\\\/#]+)\s*,/);
         if (!headerMatch) return;
         
-        const entryType = headerMatch[1].toLowerCase();
+        const entryType = (headerMatch[1] || "").toLowerCase();
         const rawKey = headerMatch[2];
         const fields: Record<string, string> = {};
         const lines = trimmedEntry.split("\n");
@@ -610,7 +629,7 @@ export default function App() {
         lines.forEach(line => {
           const fieldMatch = line.match(/^\s*([a-zA-Z0-9_\-]+)\s*=\s*([\s\S]+)/);
           if (fieldMatch) {
-            const fieldName = fieldMatch[1].trim().toLowerCase();
+            const fieldName = (fieldMatch[1] || "").trim().toLowerCase();
             let value = fieldMatch[2].trim();
             if (value.endsWith(",")) value = value.slice(0, -1).trim();
             if (value.startsWith("{") && value.endsWith("}")) value = value.slice(1, -1).trim();
@@ -2067,7 +2086,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     const element = document.createElement("a");
     const file = new Blob([content], { type: "text/plain" });
     element.href = URL.createObjectURL(file);
-    element.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    element.download = `${(title || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -2150,7 +2169,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
     const element = document.createElement("a");
     const file = new Blob([fullHtml], { type: "application/msword" });
     element.href = URL.createObjectURL(file);
-    element.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-academic-format.doc`;
+    element.download = `${(title || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-academic-format.doc`;
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
@@ -2947,8 +2966,8 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
             const filteredProjects = projects.filter((proj) => {
               if (!trimmedQuery) return true;
               return (
-                (proj.title?.toLowerCase().includes(trimmedQuery) ||
-                proj.field?.toLowerCase().includes(trimmedQuery)) ?? false
+                ((proj.title?.toLowerCase() || "").includes(trimmedQuery) ||
+                (proj.field?.toLowerCase() || "").includes(trimmedQuery)) ?? false
               );
             });
 
@@ -4512,9 +4531,9 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                       {(() => {
                                         const refs = selectedProject?.references || [];
                                         const filteredRefs = refs.filter(r => 
-                                          r.citationKey?.toLowerCase().includes(citationSearchQuery) ||
-                                          r.authors?.toLowerCase().includes(citationSearchQuery) ||
-                                          r.title?.toLowerCase().includes(citationSearchQuery)
+                                          (r.citationKey?.toLowerCase() || "").includes(citationSearchQuery) ||
+                                          (r.authors?.toLowerCase() || "").includes(citationSearchQuery) ||
+                                          (r.title?.toLowerCase() || "").includes(citationSearchQuery)
                                         );
 
                                         if (filteredRefs.length === 0) {
