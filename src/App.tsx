@@ -266,6 +266,21 @@ export default function App() {
               if (!cleaned) continue;
               const payload = JSON.parse(cleaned);
 
+              if (payload.error) {
+                setOnboardingMessages(prev => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === "model") {
+                    last.text = `Error: ${payload.error}. Please try again later.`;
+                  } else {
+                    updated.push({ role: "model", text: `Error: ${payload.error}. Please try again later.` });
+                  }
+                  return updated;
+                });
+                setIsOnboardingSending(false);
+                return;
+              }
+
               if (payload.error === "AI_CONFIG_MISSING") {
                 setOnboardingMessages(prev => {
                   const updated = [...prev];
@@ -2959,8 +2974,8 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
             const filteredProjects = projects.filter((proj) => {
               if (!trimmedQuery) return true;
               return (
-                proj.title.toLowerCase().includes(trimmedQuery) ||
-                proj.field.toLowerCase().includes(trimmedQuery)
+                (proj.title?.toLowerCase().includes(trimmedQuery) ||
+                proj.field?.toLowerCase().includes(trimmedQuery)) ?? false
               );
             });
 
@@ -3057,7 +3072,7 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                           </div>
 
                           <div className="mt-1.5 text-[9px] font-mono text-zinc-500 truncate" title={proj.field}>
-                            Field: <span className={trimmedQuery && proj.field.toLowerCase().includes(trimmedQuery) ? "text-indigo-400 font-bold" : "text-zinc-400"}>{proj.field}</span>
+                            Field: <span className={trimmedQuery && proj.field?.toLowerCase().includes(trimmedQuery) ? "text-indigo-400 font-bold" : "text-zinc-400"}>{proj.field}</span>
                           </div>
 
                           {/* Clean flat progress indicator line from structural aesthetic */}
@@ -4524,9 +4539,9 @@ Moreover, our empirical research employs a mixed methods approach, evaluating cl
                                       {(() => {
                                         const refs = selectedProject?.references || [];
                                         const filteredRefs = refs.filter(r => 
-                                          r.citationKey.toLowerCase().includes(citationSearchQuery) ||
-                                          r.authors.toLowerCase().includes(citationSearchQuery) ||
-                                          r.title.toLowerCase().includes(citationSearchQuery)
+                                          r.citationKey?.toLowerCase().includes(citationSearchQuery) ||
+                                          r.authors?.toLowerCase().includes(citationSearchQuery) ||
+                                          r.title?.toLowerCase().includes(citationSearchQuery)
                                         );
 
                                         if (filteredRefs.length === 0) {
