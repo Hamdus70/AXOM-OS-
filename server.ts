@@ -1003,7 +1003,9 @@ app.post("/api/onboarding/chat", async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
-    // Identify user messages for simulated fallback
+    // Telemetry: Log incoming request
+    console.log(`[ONBOARDING_STREAM] Starting stream for ${messages.length} messages.`);
+
     const userMessages = messages.filter(m => m.role === "user");
 
     if (aiClient) {
@@ -1045,103 +1047,50 @@ You must strictly execute this interview following the programmatic logic, valid
           }
         });
 
-        let accumulatedText = "";
         for await (const chunk of responseStream) {
           const chunkText = chunk.text || "";
-          accumulatedText += chunkText;
           const cleanChunk = chunkText.replace(/\*\*?/g, "");
           res.write(`data: ${JSON.stringify({ text: cleanChunk })}\n\n`);
         }
 
-        let projectBaseline: any = null;
-        if (accumulatedText.includes("project_baseline")) {
-          const jsonMatch = accumulatedText.match(/\{[\s\S]*"project_baseline"[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              if (parsed.project_baseline) {
-                projectBaseline = parsed.project_baseline;
-              }
-            } catch (err) {
-              console.warn("Could not parse onboarding JSON outcome:", err);
-            }
-          }
-        }
-
-        res.write(`data: ${JSON.stringify({ done: true, isComplete: !!projectBaseline, projectBaseline })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
         return;
 
       } catch (geminiChatError: any) {
-        console.warn("Onboarding chat system failure, opting down to high-fidelity simulated backup:", geminiChatError.message || geminiChatError);
+        console.error("[ONBOARDING_STREAM_ERROR] Gemini failure:", geminiChatError);
+        res.write(`data: ${JSON.stringify({ error: "GEMINI_API_REJECTION" })}\n\n`);
+        res.end();
+        return;
       }
     }
 
-    // --- FALLBACK SMART CONVERSATIONAL ROUTINE ---
-    // If aiClient is null, we run the following highly structured onboarding simulator in streaming format.
-    const stepCount = userMessages.length;
-    let replyText = "";
-    let projectBaseline: any = null;
-
-    if (stepCount === 0) {
-      replyText = `Welcome! I am the AXOM OS Strategic Onboarding Assistant—your Expert Academic Dean and Elite Research Consultant. \n\nMy mission is to assist you in gathering, refining, and validating every parameter required to authorize a pristine, publication-grade research baseline.\n\nTo list your design specifications in high standing, let us start with your proposed research topic. What is the working title or core phenomenon of your project?`;
-    } else if (stepCount === 1) {
-      const topic = userMessages[0].text;
-      replyText = `Perfect. Your topic "${topic}" establishes a clear research domain.\n\nNext, please define your Academic Faculty or Department. For example, Clinical Nursing, Computer Engineering, Business Administration, or Social Studies. This allows me to align discipline-specific matrices.`;
-    } else if (stepCount === 2) {
-      const faculty = userMessages[1].text;
-      replyText = `Understood. Aligning proposal parameters with the ${faculty} node.\n\nNow, let us lock down your core Methodological Strategy. Will your investigation run a Quantitative, Qualitative, or Mixed Methods design? Ensure this aligns with your faculty. For engineering, I recommend a Quantitative or Optimization model.`;
-    } else if (stepCount === 3) {
-      const design = userMessages[2].text;
-      replyText = `Configured. Mapped design as ${design}.\n\nStep 4 requires defining your geographical setting and target population. Who are your target subjects (e.g., ICU nurses, mobile subscribers), and what is the physical or institutional setting of your study?`;
-    } else if (stepCount === 4) {
-      const setting = userMessages[3].text;
-      replyText = `Noted. Setting recorded as: ${setting}.\n\nFinally, let us set the Academic Degree Level (Undergraduate, Postgraduate, or Ph.D.) and your obligatory citation style (e.g., APA 7th Edition, IEEE, MLA, Chicago, or Harvard). This wraps up our validation gateway.`;
-    } else {
-      // Completed! We compile and output the JSON payload.
-      const titleUser = userMessages[0]?.text || "MOCK RESEARCH TOPIC";
-      const facultyUser = userMessages[1]?.text || "Computer Engineering";
-      const designUser = userMessages[2]?.text || "Quantitative";
-      const settingUser = userMessages[3]?.text || "Regional Tech Hubs";
-      const citationLevelUser = userMessages[4]?.text || "Postgraduate, APA 7th Edition";
-
-      let citFormat = "APA";
-      if (citationLevelUser.toUpperCase().includes("IEEE")) citFormat = "IEEE";
-      else if (citationLevelUser.toUpperCase().includes("MLA")) citFormat = "MLA";
-      else if (citationLevelUser.toUpperCase().includes("HARVARD")) citFormat = "Harvard";
-
-      let tierLevel = "Undergraduate";
-      if (citationLevelUser.toUpperCase().includes("POST") || citationLevelUser.toUpperCase().includes("PHD") || citationLevelUser.toUpperCase().includes("MASTER")) {
-        tierLevel = "Postgraduate";
-      }
-
-      projectBaseline = {
-        title: titleUser.toUpperCase().replace(/[\*\"]/g, ""),
-        faculty: facultyUser,
-        study_design: designUser.includes("Qual") ? "Qualitative" : designUser.includes("Mixed") ? "Mixed" : "Quantitative",
-        setting: settingUser,
-        citation_format: citFormat,
-        academic_tier: tierLevel
-      };
-
-      replyText = `Onboarding Interview successfully finalized! Every parameter meets global research standards. I have frozen the conversation and submitted the parameters to the AXOM OS Core engine.\n\n---\nVALIDATION BASELINE LOCKDOWN SUMMARY:\n- Title: ${projectBaseline.title}\n- Faculty: ${projectBaseline.faculty}\n- Methodological Strategy: ${projectBaseline.study_design}\n- Population/Setting: ${projectBaseline.setting}\n- Academic Level: ${projectBaseline.academic_tier}\n- Citation Style: ${projectBaseline.citation_format}\n---\n\nYour workspace has been structured. The baseline database JSON below has been transmitted successfully.\n\n{\n  "project_baseline": ${JSON.stringify(projectBaseline, null, 2)}\n}`;
-    }
-
-    // Stream the simulated response
-    res.write(`data: ${JSON.stringify({ text: replyText })}\n\n`);
-    res.write(`data: ${JSON.stringify({ done: true, isComplete: !isNaN(stepCount) && stepCount >= 4, projectBaseline })}\n\n`);
+    // Fallback if aiClient is not available
+    res.write(`data: ${JSON.stringify({ error: "AI_CONFIG_MISSING" })}\n\n`);
     res.end();
 
   } catch (err: any) {
-    console.error("Onboarding chat system failure:", err);
-    res.write(`data: ${JSON.stringify({ error: err.message || "Onboarding gateway error" })}\n\n`);
+    console.error("[ONBOARDING_CHAT_FAILURE]", err);
+    res.write(`data: ${JSON.stringify({ error: "ONBOARDING_TRANSMISSION_FAILURE" })}\n\n`);
     res.end();
+  }
+});
+
+// New decoupled logging route
+app.post("/api/onboarding/save-log", async (req, res) => {
+  try {
+    const { messages, projectBaseline } = req.body;
+    console.log("[ONBOARDING_LOG] Async log received:", { messagesCount: messages?.length, hasBaseline: !!projectBaseline });
+    // Perform actual DB save here (non-blocking)
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("[ONBOARDING_LOG_FAILURE]", err);
+    res.status(500).json({ error: "Failed to save log" });
   }
 });
 
 app.post("/api/projects", async (req, res) => {
   try {
-    const projects = await loadProjects();
     const title = req.body.title;
     const field = req.body.field;
 
@@ -1185,8 +1134,7 @@ app.post("/api/projects", async (req, res) => {
       assetFile: asFile
     };
 
-    projects.push(newProject);
-    await saveProjects(projects);
+    await saveOrUpdateProject(newProject);
     res.status(201).json(newProject);
   } catch (err: any) {
     console.error("AXOM PIPELINE CRITICAL: Project registration baseline failure occurred:", err);

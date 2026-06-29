@@ -267,6 +267,7 @@ export default function App() {
               const payload = JSON.parse(cleaned);
 
               if (payload.error) {
+                console.error("ONBOARDING_STREAM_ERROR: Received error in stream", payload.error);
                 setOnboardingMessages(prev => {
                   const updated = [...prev];
                   const last = updated[updated.length - 1];
@@ -387,7 +388,8 @@ export default function App() {
             setIsOnboardingOpen(false);
           }, 3000);
         } else {
-          showError("Could not automatically register baseline. Try using the manual builder.");
+          const errData = await createRes.json().catch(() => ({}));
+          showError(errData.error || "Could not automatically register baseline. Try using the manual builder.");
         }
       }
     } catch (err: any) {
