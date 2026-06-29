@@ -22,6 +22,7 @@ import {
 
 import { getProjectsCatalog } from "./src/controllers/projectController.js";
 import { upsertChapter } from "./src/controllers/chapterController.js";
+import { onboardingChatHandler } from "./src/controllers/onboardingController.js";
 
 import {
   bootstrapVectorStoreSchema,

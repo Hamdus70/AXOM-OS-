@@ -251,6 +251,7 @@ export default function App() {
       setOnboardingMessages(prev => [...prev, { role: "model", text: "" }]);
 
       let accumulatedText = "";
+      let hasError = false;
       let completeBaseline: any = null;
 
       while (true) {
@@ -258,65 +259,35 @@ export default function App() {
         if (done) break;
 
         const chunkText = decoder.decode(value, { stream: true });
-        const lines = chunkText.split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const cleaned = line.slice(6).trim();
-              if (!cleaned) continue;
-              const payload = JSON.parse(cleaned);
+        
+        try {
+          const lines = chunkText.split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const cleaned = line.slice(6).trim();
+            if (!cleaned) continue;
 
-              if (payload.error) {
-                console.error("ONBOARDING_STREAM_ERROR: Received error in stream", payload.error);
-                setOnboardingMessages(prev => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last && last.role === "model") {
-                    last.text = `Error: ${payload.error}. Please try again later.`;
-                  } else {
-                    updated.push({ role: "model", text: `Error: ${payload.error}. Please try again later.` });
-                  }
-                  return updated;
-                });
-                setIsOnboardingSending(false);
-                return;
+            const data = JSON.parse(cleaned);
+            if (data.error) {
+              console.error("CRITICAL_STREAM_FAIL:", data.error, data.details);
+              setOnboardingMessages(prev => [...prev.slice(0, -1), { role: "model", text: `Error: ${data.error} - ${data.details}` }]);
+              hasError = true;
+              break;
+            }
+            if (data.text) {
+              accumulatedText += data.text;
+              setOnboardingMessages(prev => [...prev.slice(0, -1), { role: "model", text: accumulatedText }]);
+            }
+            if (data.done) {
+              if (data.isComplete && data.projectBaseline) {
+                completeBaseline = data.projectBaseline;
               }
-
-              if (payload.error === "AI_CONFIG_MISSING") {
-                setOnboardingMessages(prev => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last && last.role === "model") {
-                    last.text = "AI Configuration error: GEMINI_API_KEY is missing. Please populate your environment variables.";
-                  }
-                  return updated;
-                });
-                setIsOnboardingSending(false);
-                return;
-              }
-
-              if (payload.text) {
-                accumulatedText += payload.text;
-                setOnboardingMessages(prev => {
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last && last.role === "model") {
-                    last.text = accumulatedText;
-                  }
-                  return updated;
-                });
-              }
-
-              if (payload.done) {
-                if (payload.isComplete && payload.projectBaseline) {
-                  completeBaseline = payload.projectBaseline;
-                }
-              }
-            } catch (err) {
-              // Ignore partial JSON string parsing failures
             }
           }
+        } catch (e) {
+          console.error("JSON_PARSE_ERROR", e);
         }
+        if (hasError) break;
       }
 
       setIsOnboardingSending(false);

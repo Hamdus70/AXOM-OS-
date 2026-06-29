@@ -21,22 +21,39 @@ export default async function handler(req: Request) {
   }
 
   try {
-    const { messages } = await req.json();
-    if (!messages || !Array.isArray(messages)) {
-      return new Response(JSON.stringify({ error: "Messages array is required." }), {
+    let messages: any[];
+    try {
+      const body = await req.json();
+      if (!body.messages || !Array.isArray(body.messages)) {
+        return new Response(JSON.stringify({ error: "PARSING_ERROR", details: "Messages array required" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      messages = body.messages;
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "PARSING_ERROR", details: "Invalid JSON" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "axom-os-assistant",
+    let ai: GoogleGenAI;
+    try {
+      ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            "User-Agent": "axom-os-assistant",
+          },
         },
-      },
-    });
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: "CLIENT_INIT_ERROR", details: "Failed to initialize AI client" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     const contents = messages.map((m: any) => ({
       role: m.role === "user" ? "user" : "model",
@@ -113,7 +130,7 @@ You must strictly execute this interview following the programmatic logic, valid
           controller.close();
         } catch (streamError: any) {
           console.error("Vercel Edge Streaming error:", streamError);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: streamError.message || "Streaming failed" })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: "STREAM_READ_ERROR", details: streamError.message || "Streaming failed" })}\n\n`));
           controller.close();
         }
       },
@@ -129,7 +146,7 @@ You must strictly execute this interview following the programmatic logic, valid
 
   } catch (error: any) {
     console.error("Vercel Edge Handler General Error:", error);
-    return new Response(JSON.stringify({ error: "Onboarding transmission failure" }), {
+    return new Response(JSON.stringify({ error: "HANDLER_ERROR", details: error.message || "Unknown error" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
